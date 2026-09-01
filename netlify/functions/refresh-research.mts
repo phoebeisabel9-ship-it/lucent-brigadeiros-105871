@@ -8,20 +8,27 @@ import { saveDailySnapshot } from './_lib/snapshot.mjs'
 const STATUS_STORE = 'etf-buyer-cache'
 const STATUS_KEY = 'daily-refresh-status-v1'
 
-async function saveStatus(data: Record<string, unknown>) {
+async function saveStatus(
+  data: Record<string, unknown>,
+) {
   const store = getStore({
     name: STATUS_STORE,
     consistency: 'strong',
   })
 
-  await store.setJSON(STATUS_KEY, {
-    ...data,
-    updatedAt: new Date().toISOString(),
-  })
+  await store.setJSON(
+    STATUS_KEY,
+    {
+      ...data,
+      updatedAt:
+        new Date().toISOString(),
+    },
+  )
 }
 
 export default async () => {
-  const startedAt = new Date().toISOString()
+  const startedAt =
+    new Date().toISOString()
 
   await saveStatus({
     status: 'running',
@@ -36,7 +43,8 @@ export default async () => {
 
   try {
     /*
-     * STEP 1 — market data
+     * STEP 1
+     * Fetch daily market history.
      */
     await saveStatus({
       status: 'running',
@@ -45,9 +53,12 @@ export default async () => {
       error: null,
     })
 
-    console.log('Fetching daily market data')
+    console.log(
+      'Fetching daily market data',
+    )
 
-    const market = await getMarketData()
+    const market =
+      await getMarketData()
 
     if (
       !Array.isArray(market) ||
@@ -62,10 +73,13 @@ export default async () => {
       )
     }
 
-    console.log('Market data completed')
+    console.log(
+      'Market data completed',
+    )
 
     /*
-     * STEP 2 — AI/web research
+     * STEP 2
+     * Run the slower AI + web research.
      */
     await saveStatus({
       status: 'running',
@@ -74,24 +88,33 @@ export default async () => {
       error: null,
     })
 
-    console.log('Starting AI/web research')
+    console.log(
+      'Starting AI/web research',
+    )
 
-    const research = await getResearch()
+    const research =
+      await getResearch()
 
     if (
       !research ||
-      typeof research !== 'object' ||
-      Object.keys(research).length !== 5
+      typeof research !==
+        'object' ||
+      Object.keys(research).length !==
+        5
     ) {
       throw new Error(
         'Research refresh did not return all 5 ETFs',
       )
     }
 
-    console.log('AI/web research completed')
+    console.log(
+      'AI/web research completed',
+    )
 
     /*
-     * STEP 3 — save complete snapshot
+     * STEP 3
+     * Save only a COMPLETE successful
+     * snapshot.
      */
     await saveStatus({
       status: 'running',
@@ -101,12 +124,15 @@ export default async () => {
     })
 
     const snapshot = {
-      generatedAt: new Date().toISOString(),
+      generatedAt:
+        new Date().toISOString(),
       market,
       research,
     }
 
-    await saveDailySnapshot(snapshot)
+    await saveDailySnapshot(
+      snapshot,
+    )
 
     console.log(
       `Daily ETF snapshot saved at ${snapshot.generatedAt}`,
@@ -116,8 +142,13 @@ export default async () => {
       status: 'success',
       step: 'complete',
       startedAt,
-      completedAt: new Date().toISOString(),
-      snapshotGeneratedAt: snapshot.generatedAt,
+
+      completedAt:
+        new Date().toISOString(),
+
+      snapshotGeneratedAt:
+        snapshot.generatedAt,
+
       error: null,
     })
   } catch (error) {
@@ -132,34 +163,47 @@ export default async () => {
     )
 
     /*
-     * Crucially, record the failure instead
-     * of silently losing it in background logs.
+     * Record the real failure so
+     * /api/snapshot-status can show us
+     * exactly what went wrong.
      */
     try {
       await saveStatus({
         status: 'failed',
         step: 'failed',
         startedAt,
-        failedAt: new Date().toISOString(),
+
+        failedAt:
+          new Date().toISOString(),
+
         error: message,
       })
     } catch (statusError) {
       console.error(
-        'Could not persist refresh failure status:',
+        'Could not save refresh failure status:',
         statusError,
       )
     }
 
     /*
-     * Do not save/overwrite the actual daily
-     * research snapshot when anything failed.
+     * Never overwrite the previous good
+     * snapshot after a failed refresh.
      */
     throw error
   }
 }
 
+/*
+ * IMPORTANT:
+ *
+ * No custom path here.
+ *
+ * This makes Netlify expose the
+ * background function at its native
+ * endpoint:
+ *
+ * /.netlify/functions/refresh-research
+ */
 export const config: Config = {
-  path: '/api/refresh-research',
-  method: 'POST',
   background: true,
 }
