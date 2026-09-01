@@ -117,11 +117,14 @@ type Recommendation = Comparison & {
 }
 
 type DataStatus = {
-  researchGeneratedAt: string
-  researchAgeHours: number
-  researchFresh: boolean
-  marketMetricsAvailable: boolean
+  marketGeneratedAt?: string
+  marketAgeHours?: number
+  marketFresh?: boolean
+  researchGeneratedAt?: string | null
+  researchAgeDays?: number | null
   researchAvailable: boolean
+  researchAffectsRecommendation?: boolean
+  marketMetricsAvailable: boolean
   tacticalInputsAvailable: boolean
   currentPricesAvailable: boolean
   currentPriceFeedsTacticalScore?: boolean
@@ -164,11 +167,15 @@ type SnapshotStatus = {
   message?: string
   error?: string
   generatedAt?: string
+  marketGeneratedAt?: string
+  researchGeneratedAt?: string | null
   ageHours?: number
+  researchAgeDays?: number | null
   marketTickers?: string[]
   researchTickers?: string[]
   marketComplete?: boolean
   researchComplete?: boolean
+  researchRefreshError?: string | null
   refreshStatus?: RefreshStatus | null
 }
 
@@ -385,7 +392,7 @@ function Home() {
   const [dailyResearchState, setDailyResearchState] =
     useState<DailyResearchState>('checking')
   const [dailyResearchMessage, setDailyResearchMessage] =
-    useState("Checking today's market research…")
+    useState("Checking today's market data…")
   const refreshCheckStarted = useRef(false)
 
   /*
@@ -438,35 +445,37 @@ function Home() {
       await wait(5_000)
 
       const status = await readSnapshotStatus()
+      const marketTime =
+        status.marketGeneratedAt ?? status.generatedAt
 
       if (
         status.available &&
-        status.generatedAt &&
-        isSydneyToday(status.generatedAt)
+        marketTime &&
+        isSydneyToday(marketTime)
       ) {
         setDailyResearchState('ready')
         setDailyResearchMessage(
-          `Today's tactical research is ready · updated ${formatSydneyTimestamp(
-            status.generatedAt,
+          `Today's market data is ready · updated ${formatSydneyTimestamp(
+            marketTime,
           )}.`,
         )
         return
       }
 
       if (status.refreshStatus?.status === 'failed') {
-        if (status.available && status.generatedAt) {
+        if (status.available && marketTime) {
           setDailyResearchState('stale')
           setDailyResearchMessage(
-            `Today's refresh failed, so the model will use the last successful research from ${formatSydneyTimestamp(
-              status.generatedAt,
+            `Today's market refresh failed, so the model will use the last successful market snapshot from ${formatSydneyTimestamp(
+              marketTime,
             )}.`,
           )
         } else {
           setDailyResearchState('failed')
           setDailyResearchMessage(
             status.refreshStatus.error
-              ? `Today's research refresh failed: ${status.refreshStatus.error}`
-              : "Today's research refresh failed.",
+              ? `Today's market refresh failed: ${status.refreshStatus.error}`
+              : "Today's market refresh failed.",
           )
         }
         return
@@ -474,18 +483,20 @@ function Home() {
     }
 
     const status = await readSnapshotStatus().catch(() => null)
+    const marketTime =
+      status?.marketGeneratedAt ?? status?.generatedAt
 
-    if (status?.available && status.generatedAt) {
+    if (status?.available && marketTime) {
       setDailyResearchState('stale')
       setDailyResearchMessage(
-        `Today's refresh is taking longer than expected. The model can still use the last successful research from ${formatSydneyTimestamp(
-          status.generatedAt,
+        `Today's market refresh is taking longer than expected. The model can still use the last successful market snapshot from ${formatSydneyTimestamp(
+          marketTime,
         )}.`,
       )
     } else {
       setDailyResearchState('failed')
       setDailyResearchMessage(
-        "Today's research refresh is taking longer than expected. Please reload the page to try again.",
+        "Today's market refresh is taking longer than expected. Please reload the page to try again.",
       )
     }
   }
@@ -493,7 +504,7 @@ function Home() {
   async function triggerDailyRefresh() {
     setDailyResearchState('refreshing')
     setDailyResearchMessage(
-      "Refreshing today's market metrics, valuation and 7-day news research…",
+      "Refreshing today's market history…",
     )
 
     try {
@@ -507,7 +518,7 @@ function Home() {
       if (response.status !== 202 && !response.ok) {
         const text = await response.text().catch(() => '')
         throw new Error(
-          `Could not start today's research refresh: HTTP ${response.status} ${
+          `Could not start today's market refresh: HTTP ${response.status} ${
             text || response.statusText
           }`,
         )
@@ -516,12 +527,14 @@ function Home() {
       await pollForTodaySnapshot()
     } catch (refreshError) {
       const status = await readSnapshotStatus().catch(() => null)
+      const marketTime =
+        status?.marketGeneratedAt ?? status?.generatedAt
 
-      if (status?.available && status.generatedAt) {
+      if (status?.available && marketTime) {
         setDailyResearchState('stale')
         setDailyResearchMessage(
-          `Today's refresh could not be started. The model will use the last successful research from ${formatSydneyTimestamp(
-            status.generatedAt,
+          `Today's market refresh could not be started. The model will use the last successful market snapshot from ${formatSydneyTimestamp(
+            marketTime,
           )}.`,
         )
       } else {
@@ -529,7 +542,7 @@ function Home() {
         setDailyResearchMessage(
           refreshError instanceof Error
             ? refreshError.message
-            : "Today's research refresh could not be started.",
+            : "Today's market refresh could not be started.",
         )
       }
     }
@@ -537,22 +550,23 @@ function Home() {
 
   async function ensureTodayResearch() {
     setDailyResearchState('checking')
-    setDailyResearchMessage("Checking today's market research…")
+    setDailyResearchMessage("Checking today's market data…")
 
     try {
       const status = await readSnapshotStatus()
+      const marketTime =
+        status.marketGeneratedAt ?? status.generatedAt
 
       if (
         status.available &&
-        status.generatedAt &&
-        isSydneyToday(status.generatedAt) &&
-        status.marketComplete &&
-        status.researchComplete
+        marketTime &&
+        isSydneyToday(marketTime) &&
+        status.marketComplete
       ) {
         setDailyResearchState('ready')
         setDailyResearchMessage(
-          `Today's tactical research is ready · updated ${formatSydneyTimestamp(
-            status.generatedAt,
+          `Today's market data is ready · updated ${formatSydneyTimestamp(
+            marketTime,
           )}.`,
         )
         return
@@ -561,7 +575,7 @@ function Home() {
       if (status.refreshStatus?.status === 'running') {
         setDailyResearchState('refreshing')
         setDailyResearchMessage(
-          "Today's research refresh is already running…",
+          "Today's market refresh is already running…",
         )
         await pollForTodaySnapshot()
         return
@@ -573,7 +587,7 @@ function Home() {
       setDailyResearchMessage(
         statusError instanceof Error
           ? statusError.message
-          : 'Could not check daily research status.',
+          : 'Could not check daily market status.',
       )
     }
   }
@@ -1310,7 +1324,7 @@ function Home() {
                     className="spin"
                     size={19}
                   />
-                  Preparing daily research
+                  Preparing daily market data
                 </>
               ) : (
                 <>
@@ -1322,9 +1336,10 @@ function Home() {
 
             <p className="secure-note">
               <LockKeyhole size={13} />
-              Balances are stored only in this browser. Daily tactical
-              research is refreshed once when you use the app; current ETF
-              prices refresh when you analyse.
+              Balances are stored only in this browser. Market history
+              refreshes once per day; current ETF prices refresh when you
+              analyse. Research context refreshes roughly monthly and never
+              affects the recommendation score.
             </p>
           </div>
 
@@ -1496,32 +1511,29 @@ function Results({
         <div className="panel-heading">
           <div>
             <p className="kicker">
-              Daily tactical research
+              Research context
             </p>
 
             <h3>
               {recommendation.ticker} context
             </h3>
 
-            {analysis.dataStatus?.researchGeneratedAt && (
-              <p className="research-updated-note">
-                Research context updated{' '}
-                {formatSydneyTimestamp(
-                  analysis.dataStatus.researchGeneratedAt,
-                )}. It does not affect the recommendation score.
-                Current ETF prices refreshed for this analysis.
-              </p>
-            )}
+            <p className="research-updated-note">
+              {analysis.dataStatus?.researchGeneratedAt
+                ? `Context updated ${formatSydneyTimestamp(
+                    analysis.dataStatus.researchGeneratedAt,
+                  )}. It refreshes roughly monthly and does not affect the recommendation score.`
+                : 'No cached research context is available. The recommendation still works because research is not used in scoring.'}
+            </p>
           </div>
 
           <span className="live-badge">
-            Not scored
+            Context only
           </span>
         </div>
 
         <ResearchLine
           title="Valuation"
-          score={recommendation.research.valuationScore}
           text={recommendation.research.valuationContext}
         />
 
@@ -1531,8 +1543,7 @@ function Results({
         />
 
         <ResearchLine
-          title="7-day news"
-          score={recommendation.research.newsScore}
+          title="News at last research update"
           text={recommendation.research.newsSummary}
         />
 
@@ -2111,29 +2122,14 @@ function ScoreAudit({
 function ResearchLine({
   title,
   text,
-  score,
 }: {
   title: string
   text: string
-  score?: number
 }) {
   return (
     <div className="research-line">
       <div>
         <strong>{title}</strong>
-
-        {score !== undefined && (
-          <span
-            className={
-              score >= 0
-                ? 'positive-score'
-                : 'negative-score'
-            }
-          >
-            {score > 0 ? '+' : ''}
-            {score}
-          </span>
-        )}
       </div>
 
       <p>{text}</p>
