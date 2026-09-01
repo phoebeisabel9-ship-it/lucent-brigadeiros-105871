@@ -14,44 +14,25 @@ import {
   type Ticker,
 } from './_lib/types.mjs'
 
-function parseBalances(
-  value: unknown,
-): Balances {
-  if (
-    !value ||
-    typeof value !== 'object'
-  ) {
-    throw new Error(
-      'Balances are required',
-    )
+function parseBalances(value: unknown): Balances {
+  if (!value || typeof value !== 'object') {
+    throw new Error('Balances are required')
   }
 
-  const body =
-    value as Record<
-      string,
-      unknown
-    >
+  const body = value as Record<string, unknown>
 
-  const parsed =
-    Object.fromEntries(
-      [
-        ...TICKERS,
-        'cash',
-        'brokerage',
-      ].map((key) => [
-        key,
-        Number(body[key]),
-      ]),
-    ) as Balances
+  const parsed = Object.fromEntries(
+    [...TICKERS, 'cash', 'brokerage'].map((key) => [
+      key,
+      Number(body[key]),
+    ]),
+  ) as Balances
 
   if (
-    Object.values(
-      parsed,
-    ).some(
+    Object.values(parsed).some(
       (entry) =>
-        !Number.isFinite(
-          entry,
-        ) || entry < 0,
+        !Number.isFinite(entry) ||
+        entry < 0,
     )
   ) {
     throw new Error(
@@ -62,64 +43,12 @@ function parseBalances(
   return parsed
 }
 
-/*
- * Ask the long-running background
- * function to prepare a new snapshot.
- *
- * The endpoint responds immediately
- * while the research continues in
- * the background.
- */
-async function triggerRefresh(
-  req: Request,
-) {
+export default async (req: Request) => {
   try {
-    const refreshUrl =
-      new URL(
-        '/api/refresh-research',
-        req.url,
-      )
-
-    const response =
-      await fetch(
-        refreshUrl,
-        {
-          method: 'POST',
-
-          signal:
-            AbortSignal.timeout(
-              5_000,
-            ),
-        },
-      )
-
-    console.log(
-      `Research refresh trigger returned ${response.status}`,
-    )
-  } catch (error) {
-    /*
-     * A refresh-trigger failure must not
-     * break analysis if an older valid
-     * snapshot already exists.
-     */
-    console.warn(
-      'Could not trigger background refresh:',
-      error,
-    )
-  }
-}
-
-export default async (
-  req: Request,
-) => {
-  try {
-    if (
-      req.method !== 'POST'
-    ) {
+    if (req.method !== 'POST') {
       return Response.json(
         {
-          error:
-            'Method not allowed',
+          error: 'Method not allowed',
         },
         {
           status: 405,
@@ -127,34 +56,24 @@ export default async (
       )
     }
 
-    const balances =
-      parseBalances(
-        await req.json(),
-      )
+    const balances = parseBalances(
+      await req.json(),
+    )
 
     /*
-     * Load the LAST SUCCESSFUL daily
+     * Read the latest SUCCESSFUL daily
      * market + research snapshot.
      */
     const snapshot =
       await getDailySnapshot()
 
-    /*
-     * If the app has never successfully
-     * produced a snapshot, start one now.
-     *
-     * Importantly, we do NOT substitute
-     * fake neutral research.
-     */
     if (!snapshot) {
-      await triggerRefresh(req)
-
       return Response.json(
         {
           error:
-            'Your first market research snapshot is being prepared. Please wait a few minutes and press Analyse again.',
+            'Today’s market research has not been prepared yet.',
           code:
-            'SNAPSHOT_PREPARING',
+            'SNAPSHOT_MISSING',
         },
         {
           status: 503,
@@ -163,9 +82,7 @@ export default async (
     }
 
     const ageHours =
-      getSnapshotAgeHours(
-        snapshot,
-      )
+      getSnapshotAgeHours(snapshot)
 
     const fresh =
       isSnapshotFresh(
@@ -174,49 +91,23 @@ export default async (
       )
 
     /*
-     * If the saved research is older than
-     * 36 hours, keep using it rather than
-     * replacing it with zeroes.
-     *
-     * At the same time, request a fresh
-     * background snapshot.
-     */
-    if (!fresh) {
-      void triggerRefresh(
-        req,
-      )
-    }
-
-    /*
-     * Only the current ETF prices are
-     * fetched on every Analyse click.
-     *
-     * These are required for the exact
-     * whole-unit trade calculation.
+     * Fetch only current/latest ETF prices.
+     * The slower analytical metrics come
+     * from the cached daily snapshot.
      */
     const currentPrices =
       await getCurrentPrices()
 
-    /*
-     * Keep the daily 1W / 1M / 3M /
-     * 52-week metrics from the snapshot,
-     * but replace its price with the most
-     * current price available.
-     */
     const market =
       (
         snapshot.market as MarketDatum[]
       ).map(
-        (
-          datum,
-        ): MarketDatum => {
+        (datum): MarketDatum => {
           const ticker =
             datum.ticker as Ticker
 
           const live =
-            currentPrices[
-              ticker
-            ]
+            currentPrices[ticker]
 
           if (!live) {
             return datum
@@ -224,10 +115,7 @@ export default async (
 
           return {
             ...datum,
-
-            price:
-              live.price,
-
+            price: live.price,
             asOf:
               live.asOf ||
               datum.asOf,
@@ -236,15 +124,13 @@ export default async (
       )
 
     /*
-     * Run the deterministic portfolio
-     * scoring model.
+     * Run deterministic scoring:
      *
-     * Strategic score = 80%
-     * Tactical score = 20%
+     * 80% strategic
+     * 20% tactical
      *
-     * Tactical inputs now come from the
-     * last REAL successful research
-     * snapshot, not fake neutral values.
+     * Tactical inputs are the last
+     * successfully researched snapshot.
      */
     const result =
       analyseTrades(
@@ -256,33 +142,28 @@ export default async (
     return Response.json({
       ...result,
 
-      /*
-       * Extra metadata for the frontend.
-       * Existing UI can safely ignore this
-       * until we update it in a later file.
-       */
       dataStatus: {
         researchGeneratedAt:
           snapshot.generatedAt,
 
         researchAgeHours:
           Number(
-            ageHours.toFixed(
-              1,
-            ),
+            ageHours.toFixed(1),
           ),
 
         researchFresh:
           fresh,
 
-        researchSource:
-          fresh
-            ? 'daily-cache'
-            : 'stale-cache',
+        marketMetricsAvailable:
+          true,
 
-        livePrices: true,
+        researchAvailable:
+          true,
 
         tacticalInputsAvailable:
+          true,
+
+        currentPricesAvailable:
           true,
       },
     })
