@@ -202,10 +202,27 @@ function allocationForTrade(
   })
 }
 
+function fallbackResearch(
+  ticker: Ticker,
+): ResearchDatum {
+  return {
+    valuationScore: 0,
+    newsScore: 0,
+    thesisDisqualified: false,
+    valuationContext:
+      `Research context for ${ticker} is not currently available. This does not affect the recommendation score.`,
+    developments:
+      'No cached research context is currently available.',
+    newsSummary:
+      'No cached research context is currently available.',
+    citations: [],
+  }
+}
+
 export function analyseTrades(
   balances: Balances,
   market: MarketDatum[],
-  research: Record<Ticker, ResearchDatum>,
+  research: Partial<Record<Ticker, ResearchDatum>> = {},
 ) {
   const marketByTicker =
     Object.fromEntries(
@@ -237,17 +254,12 @@ export function analyseTrades(
           | undefined
 
       const researchDatum =
-        research[ticker]
+        research[ticker] ??
+        fallbackResearch(ticker)
 
       if (!datum) {
         throw new Error(
           `Market data is missing for ${ticker}.`,
-        )
-      }
-
-      if (!researchDatum) {
-        throw new Error(
-          `Research data is missing for ${ticker}.`,
         )
       }
 
