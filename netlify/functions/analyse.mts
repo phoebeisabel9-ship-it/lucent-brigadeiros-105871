@@ -14,24 +14,49 @@ import {
   type Ticker,
 } from './_lib/types.mjs'
 
-function parseBalances(value: unknown): Balances {
-  if (!value || typeof value !== 'object') {
-    throw new Error('Balances are required')
+type MarketWithSnapshot = MarketDatum & {
+  snapshotPrice: number
+  snapshotAsOf: string
+}
+
+function parseBalances(
+  value: unknown,
+): Balances {
+  if (
+    !value ||
+    typeof value !== 'object'
+  ) {
+    throw new Error(
+      'Balances are required',
+    )
   }
 
-  const body = value as Record<string, unknown>
+  const body =
+    value as Record<
+      string,
+      unknown
+    >
 
-  const parsed = Object.fromEntries(
-    [...TICKERS, 'cash', 'brokerage'].map((key) => [
-      key,
-      Number(body[key]),
-    ]),
-  ) as Balances
+  const parsed =
+    Object.fromEntries(
+      [
+        ...TICKERS,
+        'cash',
+        'brokerage',
+      ].map((key) => [
+        key,
+        Number(body[key]),
+      ]),
+    ) as Balances
 
   if (
-    Object.values(parsed).some(
+    Object.values(
+      parsed,
+    ).some(
       (entry) =>
-        !Number.isFinite(entry) ||
+        !Number.isFinite(
+          entry,
+        ) ||
         entry < 0,
     )
   ) {
@@ -43,12 +68,17 @@ function parseBalances(value: unknown): Balances {
   return parsed
 }
 
-export default async (req: Request) => {
+export default async (
+  req: Request,
+) => {
   try {
-    if (req.method !== 'POST') {
+    if (
+      req.method !== 'POST'
+    ) {
       return Response.json(
         {
-          error: 'Method not allowed',
+          error:
+            'Method not allowed',
         },
         {
           status: 405,
@@ -56,12 +86,13 @@ export default async (req: Request) => {
       )
     }
 
-    const balances = parseBalances(
-      await req.json(),
-    )
+    const balances =
+      parseBalances(
+        await req.json(),
+      )
 
     /*
-     * Read the latest SUCCESSFUL daily
+     * Read the latest successful daily
      * market + research snapshot.
      */
     const snapshot =
@@ -82,7 +113,9 @@ export default async (req: Request) => {
     }
 
     const ageHours =
-      getSnapshotAgeHours(snapshot)
+      getSnapshotAgeHours(
+        snapshot,
+      )
 
     const fresh =
       isSnapshotFresh(
@@ -91,9 +124,12 @@ export default async (req: Request) => {
       )
 
     /*
-     * Fetch only current/latest ETF prices.
-     * The slower analytical metrics come
-     * from the cached daily snapshot.
+     * Fetch the current/latest ETF prices.
+     *
+     * IMPORTANT:
+     * Keep the daily snapshot price as snapshotPrice.
+     * The scoring engine uses both prices to recalculate
+     * 1W / 1M / 3M returns and the 52W drawdown.
      */
     const currentPrices =
       await getCurrentPrices()
@@ -102,35 +138,45 @@ export default async (req: Request) => {
       (
         snapshot.market as MarketDatum[]
       ).map(
-        (datum): MarketDatum => {
+        (
+          datum,
+        ): MarketWithSnapshot => {
           const ticker =
             datum.ticker as Ticker
 
           const live =
-            currentPrices[ticker]
-
-          if (!live) {
-            return datum
-          }
+            currentPrices[
+              ticker
+            ]
 
           return {
             ...datum,
-            price: live.price,
+
+            snapshotPrice:
+              datum.price,
+
+            snapshotAsOf:
+              datum.asOf,
+
+            price:
+              live?.price ??
+              datum.price,
+
             asOf:
-              live.asOf ||
+              live?.asOf ??
               datum.asOf,
           }
         },
       )
 
     /*
-     * Run deterministic scoring:
+     * Run the scoring model:
      *
-     * 80% strategic
-     * 20% tactical
+     * 60% strategic
+     * 40% tactical
      *
-     * Tactical inputs are the last
-     * successfully researched snapshot.
+     * Tactical price signals are adjusted
+     * using the current/latest price.
      */
     const result =
       analyseTrades(
@@ -148,7 +194,9 @@ export default async (req: Request) => {
 
         researchAgeHours:
           Number(
-            ageHours.toFixed(1),
+            ageHours.toFixed(
+              1,
+            ),
           ),
 
         researchFresh:
@@ -165,6 +213,9 @@ export default async (req: Request) => {
 
         currentPricesAvailable:
           true,
+
+        currentPriceFeedsTacticalScore:
+          true,
       },
     })
   } catch (error) {
@@ -180,7 +231,8 @@ export default async (req: Request) => {
 
     return Response.json(
       {
-        error: message,
+        error:
+          message,
       },
       {
         status: 500,
