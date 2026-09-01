@@ -164,6 +164,14 @@ const labels: Record<Ticker, string> = {
   VESG: 'Ethical International',
 }
 
+const tickerColors: Record<Ticker, string> = {
+  IVV: '#216749',
+  DHHF: '#A9C95D',
+  VEU: '#E59A5C',
+  VAS: '#D86E5B',
+  VESG: '#7D91B2',
+}
+
 const money = new Intl.NumberFormat('en-AU', {
   style: 'currency',
   currency: 'AUD',
@@ -512,15 +520,7 @@ function Home() {
       })
 
       setAnalysis(result)
-      setNotice(
-        `Analysis completed using current prices and ${
-          result.dataStatus?.researchGeneratedAt
-            ? `research updated ${formatSydneyTimestamp(
-                result.dataStatus.researchGeneratedAt,
-              )}`
-            : 'the latest successful daily research'
-        }.`,
-      )
+      setNotice('')
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -575,6 +575,62 @@ function Home() {
 
   return (
     <main className="app-shell">
+      <style>{`
+        .allocation-pair-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 22px;
+          margin-top: 22px;
+        }
+
+        .allocation-pair-grid .allocation-card {
+          min-height: 0;
+        }
+
+        .research-full-card {
+          margin-top: 22px;
+        }
+
+        .research-full-card .panel-heading {
+          margin-bottom: 6px;
+        }
+
+        .research-full-card .research-line {
+          padding: 22px 0;
+        }
+
+        .research-full-card .research-line p {
+          font-size: 15px;
+          line-height: 1.65;
+          max-width: 1100px;
+        }
+
+        .research-full-card .citations {
+          margin-top: 8px;
+        }
+
+        .research-updated-note {
+          color: #627269;
+          font-size: 13px;
+          line-height: 1.4;
+          margin: 6px 0 0;
+        }
+
+        .allocation-row > div > i {
+          transition: width 220ms ease;
+        }
+
+        @media (max-width: 760px) {
+          .allocation-pair-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .research-full-card .research-line p {
+            font-size: 14px;
+          }
+        }
+      `}</style>
+
       <header className="topbar">
         <a
           className="brand"
@@ -632,6 +688,7 @@ function Home() {
                   key={ticker}
                   style={{
                     width: `${targets[ticker] * 100}%`,
+                    backgroundColor: tickerColors[ticker],
                   }}
                 />
               ))}
@@ -642,6 +699,7 @@ function Home() {
                 <div key={ticker}>
                   <i
                     className={`dot dot-${ticker.toLowerCase()}`}
+                    style={{ backgroundColor: tickerColors[ticker] }}
                   />
 
                   <span>{ticker}</span>
@@ -902,16 +960,6 @@ function Results({
 
   return (
     <section className="results-section">
-      {analysis.dataStatus && (
-        <div className="message success-message">
-          <Check size={16} />
-          Tactical inputs complete · daily market metrics and research updated{' '}
-          {formatSydneyTimestamp(
-            analysis.dataStatus.researchGeneratedAt,
-          )} · current ETF prices refreshed for this analysis.
-        </div>
-      )}
-
       <div className="result-hero">
         <div className="buy-copy">
           <p className="eyebrow">
@@ -1014,84 +1062,76 @@ function Results({
         />
       </div>
 
-      <div className="result-grid">
+      <div className="allocation-pair-grid">
         <AllocationCard
           title="Allocation before"
-          allocation={
-            recommendation.beforeAllocation
-          }
+          allocation={recommendation.beforeAllocation}
         />
 
         <AllocationCard
           title="Allocation after"
-          allocation={
-            recommendation.afterAllocation
-          }
+          allocation={recommendation.afterAllocation}
           target={analysis.targets}
         />
+      </div>
 
-        <div className="panel research-card">
-          <div className="panel-heading">
-            <div>
-              <p className="kicker">
-                Daily tactical research
+      <div className="panel research-card research-full-card">
+        <div className="panel-heading">
+          <div>
+            <p className="kicker">
+              Daily tactical research
+            </p>
+
+            <h3>
+              {recommendation.ticker} context
+            </h3>
+
+            {analysis.dataStatus?.researchGeneratedAt && (
+              <p className="research-updated-note">
+                Market metrics + research updated{' '}
+                {formatSydneyTimestamp(
+                  analysis.dataStatus.researchGeneratedAt,
+                )}. Current ETF prices refreshed for this analysis.
               </p>
-
-              <h3>
-                {recommendation.ticker} context
-              </h3>
-            </div>
-
-            <span className="live-badge">
-              Daily
-            </span>
-          </div>
-
-          <ResearchLine
-            title="Valuation"
-            score={
-              recommendation.research
-                .valuationScore
-            }
-            text={
-              recommendation.research
-                .valuationContext
-            }
-          />
-
-          <ResearchLine
-            title="Developments"
-            text={
-              recommendation.research
-                .developments
-            }
-          />
-
-          <ResearchLine
-            title="7-day news"
-            score={
-              recommendation.research.newsScore
-            }
-            text={
-              recommendation.research.newsSummary
-            }
-          />
-
-          <div className="citations">
-            {recommendation.research.citations.map(
-              (citation) => (
-                <a
-                  key={citation.url}
-                  href={citation.url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <ExternalLink size={13} />
-                  {citation.title}
-                </a>
-              ),
             )}
           </div>
+
+          <span className="live-badge">
+            Daily
+          </span>
+        </div>
+
+        <ResearchLine
+          title="Valuation"
+          score={recommendation.research.valuationScore}
+          text={recommendation.research.valuationContext}
+        />
+
+        <ResearchLine
+          title="Developments"
+          text={recommendation.research.developments}
+        />
+
+        <ResearchLine
+          title="7-day news"
+          score={recommendation.research.newsScore}
+          text={recommendation.research.newsSummary}
+        />
+
+        <div className="citations">
+          {recommendation.research.citations.map(
+            (citation) => (
+              <a
+                key={citation.url}
+                href={citation.url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <ExternalLink size={13} />
+                {citation.title}
+              </a>
+            ),
+          )}
         </div>
       </div>
 
@@ -1296,7 +1336,25 @@ function AllocationCard({
           className="allocation-row"
           key={ticker}
         >
-          <span>{ticker}</span>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '7px',
+            }}
+          >
+            <i
+              aria-hidden="true"
+              style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '999px',
+                backgroundColor: tickerColors[ticker],
+                flex: '0 0 auto',
+              }}
+            />
+            {ticker}
+          </span>
 
           <div>
             <i
@@ -1305,6 +1363,7 @@ function AllocationCard({
                   100,
                   allocation[ticker] * 240,
                 )}%`,
+                backgroundColor: tickerColors[ticker],
               }}
             />
           </div>
