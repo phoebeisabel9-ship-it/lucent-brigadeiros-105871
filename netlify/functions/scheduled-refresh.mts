@@ -10,7 +10,7 @@ export default async () => {
   }
 
   const refreshUrl = new URL(
-    '/api/refresh-research',
+    '/.netlify/functions/refresh-research',
     siteUrl,
   )
 
@@ -23,10 +23,6 @@ export default async () => {
     {
       method: 'POST',
 
-      /*
-       * The refresh endpoint is a Background Function,
-       * so it should reply almost immediately with 202.
-       */
       signal:
         AbortSignal.timeout(
           10_000,
@@ -34,6 +30,10 @@ export default async () => {
     },
   )
 
+  /*
+   * Background Functions normally return
+   * 202 Accepted immediately.
+   */
   if (
     response.status !== 202 &&
     !response.ok
@@ -49,22 +49,15 @@ export default async () => {
   }
 
   console.log(
-    `Daily ETF refresh successfully queued with status ${response.status}`,
+    `Background refresh queued successfully with HTTP ${response.status}`,
   )
 }
 
 export const config: Config = {
   /*
-   * Netlify schedules are UTC.
-   *
-   * 21:00 UTC Sunday–Thursday =
-   * Monday–Friday morning in Sydney:
-   *
-   * ~7:00am during AEST
-   * ~8:00am during AEDT
-   *
-   * Both are before the ASX opens.
+   * Runs Sunday–Thursday UTC,
+   * which corresponds to Monday–Friday
+   * morning in Sydney.
    */
-  schedule:
-    '0 21 * * 0-4',
+  schedule: '0 21 * * 0-4',
 }
