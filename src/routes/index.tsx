@@ -67,8 +67,6 @@ type TacticalComponents = {
   month: TacticalComponent
   quarter: TacticalComponent
   drawdown52Week: TacticalComponent
-  valuation: TacticalComponent
-  news: TacticalComponent
 }
 
 type Comparison = {
@@ -84,7 +82,9 @@ type Comparison = {
   beforeAllocation?: Allocation
   afterAllocation?: Allocation
   beforeStrategicScore?: number
+  portfolioPriorityScore?: number
   strategicScore: number
+  marketOpportunityScore?: number
   tacticalScore: number
   tacticalLabel?: string
   overallScore: number
@@ -141,7 +141,10 @@ type Analysis = {
     tradeSizing?: string
     strategicScale?: string
     tacticalScale?: string
+    portfolioPriorityScale?: string
+    marketOpportunityScale?: string
     currentPriceAdjustment?: string
+    researchAffectsRecommendation?: boolean
   }
 }
 
@@ -955,7 +958,7 @@ function Home() {
 
         .tactical-grid {
           display: grid;
-          grid-template-columns: repeat(6, minmax(0, 1fr));
+          grid-template-columns: repeat(4, minmax(0, 1fr));
           gap: 10px;
         }
 
@@ -1457,7 +1460,7 @@ function Results({
         />
 
         <Metric
-          label="Target fit"
+          label="Portfolio priority"
           value={`${recommendation.strategicScore.toFixed(
             1,
           )}/100`}
@@ -1502,16 +1505,17 @@ function Results({
 
             {analysis.dataStatus?.researchGeneratedAt && (
               <p className="research-updated-note">
-                Market metrics + research updated{' '}
+                Research context updated{' '}
                 {formatSydneyTimestamp(
                   analysis.dataStatus.researchGeneratedAt,
-                )}. Current ETF prices refreshed for this analysis.
+                )}. It does not affect the recommendation score.
+                Current ETF prices refreshed for this analysis.
               </p>
             )}
           </div>
 
           <span className="live-badge">
-            Daily
+            Not scored
           </span>
         </div>
 
@@ -1593,7 +1597,7 @@ function Results({
                 <th>1M*</th>
                 <th>3M*</th>
                 <th>52W DD*</th>
-                <th>Target fit /100</th>
+                <th>Priority /100</th>
                 <th>Opportunity /100</th>
                 <th>Overall /100</th>
                 <th>Status</th>
@@ -1676,7 +1680,7 @@ function Results({
                         <strong>
                           {item.strategicScore.toFixed(1)}
                         </strong>
-                        <small>after-trade target</small>
+                        <small>portfolio need</small>
                       </div>
                     </td>
 
@@ -1912,18 +1916,6 @@ function ScoreAudit({
           score: components.drawdown52Week.score,
           weight: components.drawdown52Week.weight,
         },
-        {
-          label: 'Valuation',
-          raw: `${components.valuation.rawValue > 0 ? '+' : ''}${components.valuation.rawValue}`,
-          score: components.valuation.score,
-          weight: components.valuation.weight,
-        },
-        {
-          label: 'News',
-          raw: `${components.news.rawValue > 0 ? '+' : ''}${components.news.rawValue}`,
-          score: components.news.score,
-          weight: components.news.weight,
-        },
       ]
     : []
 
@@ -1978,17 +1970,17 @@ function ScoreAudit({
           }}
         >
           <strong>
-            Target fit {item.strategicScore.toFixed(1)}/100
+            Portfolio priority {item.strategicScore.toFixed(1)}/100
           </strong>
           <strong>
-            Opportunity {item.tacticalScore.toFixed(1)}/100
+            Market opportunity {item.tacticalScore.toFixed(1)}/100
           </strong>
           <strong>
             Overall {item.overallScore.toFixed(1)}/100
           </strong>
         </div>
 
-        {item.afterAllocation && (
+        {item.beforeAllocation && (
           <div
             className="target-fit-proof"
             style={{
@@ -1996,9 +1988,9 @@ function ScoreAudit({
             }}
           >
             <div>
-              <span>Post-trade {item.ticker}</span>
+              <span>Current {item.ticker}</span>
               <strong>
-                {percent(item.afterAllocation[item.ticker])}
+                {percent(item.beforeAllocation[item.ticker])}
               </strong>
             </div>
 
@@ -2015,10 +2007,26 @@ function ScoreAudit({
             </div>
 
             <div>
-              <span>Target fit</span>
+              <span>Portfolio priority</span>
               <strong>{item.strategicScore.toFixed(1)}/100</strong>
             </div>
           </div>
+        )}
+
+        {item.afterAllocation && (
+          <p
+            style={{
+              margin: '0 0 14px',
+              color: '#6f7b74',
+              fontSize: '11px',
+            }}
+          >
+            Proposed trade: {item.units} {item.ticker} unit
+            {item.units === 1 ? '' : 's'} → post-trade allocation{' '}
+            <strong>
+              {percent(item.afterAllocation[item.ticker])}
+            </strong>.
+          </p>
         )}
 
         <div className="price-proof">
@@ -2049,10 +2057,12 @@ function ScoreAudit({
         </div>
 
         <p className="live-proof">
-          Target fit compares this ETF&apos;s proposed post-trade weight with
-          its own target. The latest price is fetched when you press Analyse
-          and is used to recalculate the 1W, 1M, 3M and 52-week drawdown
-          inputs before the opportunity score is built.
+          Portfolio priority measures how much this ETF currently needs the
+          next contribution: 100 is maximally underweight, 50 is exactly on
+          target and 0 is at or beyond the hard overweight cap. The latest
+          price is fetched when you press Analyse and is used to recalculate
+          the 1W, 1M, 3M and 52-week drawdown inputs before the market
+          opportunity score is built. Research context is not used here.
         </p>
 
         {componentCards.length > 0 && (
@@ -2068,7 +2078,7 @@ function ScoreAudit({
                 <strong>{component.raw}</strong>
                 <small>
                   {component.score.toFixed(1)}/100 ·{' '}
-                  {(component.weight * 100).toFixed(0)}% of opportunity
+                  {(component.weight * 100).toFixed(0)}% of market opportunity
                 </small>
               </div>
             ))}
