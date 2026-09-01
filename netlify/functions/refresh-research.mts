@@ -3,207 +3,223 @@ import { getStore } from '@netlify/blobs'
 
 import { getMarketData } from './_lib/market.mjs'
 import { getResearch } from './_lib/research.mjs'
-import { saveDailySnapshot } from './_lib/snapshot.mjs'
+import {
+  getDailySnapshot,
+  saveDailySnapshot,
+} from './_lib/snapshot.mjs'
+import { TICKERS, type Ticker } from './_lib/types.mjs'
 
-const STATUS_STORE = 'etf-buyer-cache'
+const STORE_NAME = 'etf-buyer-cache'
 const STATUS_KEY = 'daily-refresh-status-v1'
 
-async function saveStatus(
-  data: Record<string, unknown>,
-) {
-  const store = getStore({
-    name: STATUS_STORE,
+const RESEARCH_MAX_AGE_DAYS = 30
+const RESEARCH_RETRY_DAYS = 7
+
+function store() {
+  return getStore({
+    name: STORE_NAME,
     consistency: 'strong',
   })
+}
 
-  await store.setJSON(
-    STATUS_KEY,
-    {
-      ...data,
-      updatedAt:
-        new Date().toISOString(),
-    },
+function sydneyDateKey(value: string | Date) {
+  const date = value instanceof Date ? value : new Date(value)
+
+  const parts = new Intl.DateTimeFormat('en-AU', {
+    timeZone: 'Australia/Sydney',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date)
+
+  const year = parts.find((part) => part.type === 'year')?.value
+  const month = parts.find((part) => part.type === 'month')?.value
+  const day = parts.find((part) => part.type === 'day')?.value
+
+  return `${year}-${month}-${day}`
+}
+
+function isSydneyToday(timestamp?: string) {
+  if (!timestamp) return false
+  return sydneyDateKey(timestamp) === sydneyDateKey(new Date())
+}
+
+function researchComplete(research: any) {
+  return TICKERS.every((ticker) =>
+    Boolean(research?.[ticker as Ticker]),
   )
 }
 
-export default async () => {
-  const startedAt =
-    new Date().toISOString()
+function ageDays(timestamp?: string | null) {
+  if (!timestamp) return Number.POSITIVE_INFINITY
 
-  await saveStatus({
+  const ms = Date.now() - new Date(timestamp).getTime()
+
+  if (!Number.isFinite(ms)) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  return Math.max(0, ms / (1000 * 60 * 60 * 24))
+}
+
+async function setStatus(status: Record<string, any>) {
+  await store().setJSON(STATUS_KEY, {
+    ...status,
+    updatedAt: new Date().toISOString(),
+  })
+}
+
+export default async () => {
+  const startedAt = new Date().toISOString()
+
+  const existingStatus = await store().get(STATUS_KEY, {
+    type: 'json',
+    consistency: 'strong',
+  })
+
+  if (
+    existingStatus?.status === 'running' &&
+    ageDays(existingStatus.startedAt) < 20 / (24 * 60)
+  ) {
+    console.log('Refresh already running; skipping duplicate trigger.')
+    return
+  }
+
+  const existing = await getDailySnapshot()
+
+  const existingMarketTime =
+    existing?.marketGeneratedAt ?? existing?.generatedAt
+
+  if (existing && isSydneyToday(existingMarketTime)) {
+    console.log(
+      'Today’s market snapshot already exists; skipping duplicate refresh.',
+    )
+    return
+  }
+
+  await setStatus({
     status: 'running',
-    step: 'starting',
+    step: 'market-data',
     startedAt,
+    completedAt: null,
     error: null,
   })
 
-  console.log(
-    `Starting daily ETF refresh at ${startedAt}`,
-  )
-
   try {
-    /*
-     * STEP 1
-     * Fetch daily market history.
-     */
-    await saveStatus({
-      status: 'running',
-      step: 'market-data',
-      startedAt,
-      error: null,
-    })
+    const market = await getMarketData()
+    const marketGeneratedAt = new Date().toISOString()
 
-    console.log(
-      'Fetching daily market data',
-    )
+    let research = existing?.research ?? {}
 
-    const market =
-      await getMarketData()
+    let researchGeneratedAt =
+      existing?.researchGeneratedAt ??
+      (researchComplete(research) ? existing?.generatedAt : null)
 
-    if (
-      !Array.isArray(market) ||
-      market.length !== 5
-    ) {
-      throw new Error(
-        `Market refresh returned ${
-          Array.isArray(market)
-            ? market.length
-            : 0
-        } ETFs instead of 5`,
-      )
+    let researchAttemptedAt =
+      existing?.researchAttemptedAt ?? null
+
+    let researchRefreshed = false
+    let researchRefreshError: string | null = null
+
+    const researchAgeDays = ageDays(researchGeneratedAt)
+
+    const researchIsDue =
+      !researchComplete(research) ||
+      researchAgeDays >= RESEARCH_MAX_AGE_DAYS
+
+    const retryAllowed =
+      !researchAttemptedAt ||
+      ageDays(researchAttemptedAt) >= RESEARCH_RETRY_DAYS
+
+    if (researchIsDue && retryAllowed) {
+      researchAttemptedAt = new Date().toISOString()
+
+      await setStatus({
+        status: 'running',
+        step: 'research-context',
+        startedAt,
+        completedAt: null,
+        error: null,
+      })
+
+      try {
+        research = await getResearch()
+        researchGeneratedAt = new Date().toISOString()
+        researchRefreshed = true
+      } catch (error) {
+        researchRefreshError =
+          error instanceof Error
+            ? error.message
+            : 'Research context refresh failed'
+
+        console.error(
+          'Research context refresh failed; continuing with market-only snapshot:',
+          error,
+        )
+      }
     }
 
-    console.log(
-      'Market data completed',
-    )
-
-    /*
-     * STEP 2
-     * Run the slower AI + web research.
-     */
-    await saveStatus({
-      status: 'running',
-      step: 'ai-research',
-      startedAt,
-      error: null,
-    })
-
-    console.log(
-      'Starting AI/web research',
-    )
-
-    const research =
-      await getResearch()
-
-    if (
-      !research ||
-      typeof research !==
-        'object' ||
-      Object.keys(research).length !==
-        5
-    ) {
-      throw new Error(
-        'Research refresh did not return all 5 ETFs',
-      )
-    }
-
-    console.log(
-      'AI/web research completed',
-    )
-
-    /*
-     * STEP 3
-     * Save only a COMPLETE successful
-     * snapshot.
-     */
-    await saveStatus({
+    await setStatus({
       status: 'running',
       step: 'saving-snapshot',
       startedAt,
+      completedAt: null,
       error: null,
     })
 
     const snapshot = {
-      generatedAt:
-        new Date().toISOString(),
+      generatedAt: marketGeneratedAt,
+      marketGeneratedAt,
+      researchGeneratedAt,
+      researchAttemptedAt,
+      researchRefreshed,
+      researchRefreshError,
       market,
       research,
     }
 
-    await saveDailySnapshot(
-      snapshot,
-    )
+    await saveDailySnapshot(snapshot)
 
-    console.log(
-      `Daily ETF snapshot saved at ${snapshot.generatedAt}`,
-    )
+    const completedAt = new Date().toISOString()
 
-    await saveStatus({
+    await setStatus({
       status: 'success',
       step: 'complete',
       startedAt,
-
-      completedAt:
-        new Date().toISOString(),
-
-      snapshotGeneratedAt:
-        snapshot.generatedAt,
-
+      completedAt,
+      snapshotGeneratedAt: marketGeneratedAt,
+      marketGeneratedAt,
+      researchGeneratedAt,
+      researchRefreshed,
+      researchRefreshError,
       error: null,
     })
+
+    console.log(
+      `Daily market snapshot saved. AI research refreshed: ${
+        researchRefreshed ? 'yes' : 'no'
+      }.`,
+    )
   } catch (error) {
     const message =
       error instanceof Error
         ? error.message
-        : String(error)
+        : 'Daily market refresh failed'
 
-    console.error(
-      'Daily ETF refresh failed:',
-      error,
-    )
+    console.error('Daily market refresh failed:', error)
 
-    /*
-     * Record the real failure so
-     * /api/snapshot-status can show us
-     * exactly what went wrong.
-     */
-    try {
-      await saveStatus({
-        status: 'failed',
-        step: 'failed',
-        startedAt,
+    await setStatus({
+      status: 'failed',
+      step: 'failed',
+      startedAt,
+      completedAt: new Date().toISOString(),
+      error: message,
+    })
 
-        failedAt:
-          new Date().toISOString(),
-
-        error: message,
-      })
-    } catch (statusError) {
-      console.error(
-        'Could not save refresh failure status:',
-        statusError,
-      )
-    }
-
-    /*
-     * Never overwrite the previous good
-     * snapshot after a failed refresh.
-     */
     throw error
   }
 }
 
-/*
- * IMPORTANT:
- *
- * No custom path here.
- *
- * This makes Netlify expose the
- * background function at its native
- * endpoint:
- *
- * /.netlify/functions/refresh-research
- */
 export const config: Config = {
   background: true,
 }
