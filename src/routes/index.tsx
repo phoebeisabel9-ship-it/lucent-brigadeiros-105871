@@ -663,6 +663,15 @@ function Home() {
   return (
     <main className="app-shell">
       <style>{`
+        .workspace-grid {
+          grid-template-columns: 1fr !important;
+        }
+
+        .workspace-grid .input-panel {
+          grid-column: 1 / -1;
+          width: 100%;
+        }
+
         .allocation-pair-grid {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -985,90 +994,6 @@ function Home() {
         .guardrail-note.blocked {
           background: rgba(195, 95, 95, 0.09);
           color: #a55454;
-        }
-
-        .method-card.policy-compact {
-          padding: 24px;
-          display: flex;
-          flex-direction: column;
-          gap: 16px;
-          justify-content: flex-start;
-          background: #f8f7f2;
-          border: 1px solid rgba(45, 58, 50, 0.12);
-          box-shadow: none;
-        }
-
-        .policy-title-row {
-          display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          gap: 16px;
-        }
-
-        .policy-title-row .kicker {
-          margin-bottom: 6px;
-        }
-
-        .policy-title-row h3 {
-          margin: 0;
-          font-size: 20px;
-          line-height: 1.15;
-        }
-
-        .policy-title-row > svg {
-          color: #216749;
-          flex: 0 0 auto;
-          margin-top: 2px;
-        }
-
-        .policy-split {
-          display: grid;
-          grid-template-columns: 3fr 2fr;
-          gap: 10px;
-        }
-
-        .policy-split > div {
-          padding: 14px;
-          border-radius: 13px;
-          background: #ffffff;
-          border: 1px solid rgba(45, 58, 50, 0.09);
-          display: flex;
-          flex-direction: column;
-          gap: 2px;
-        }
-
-        .policy-split > div:first-child {
-          border-top: 3px solid #6f8fb3;
-        }
-
-        .policy-split > div:last-child {
-          border-top: 3px solid #d98c7c;
-        }
-
-        .policy-split strong {
-          font-size: 24px;
-          line-height: 1;
-          letter-spacing: -0.03em;
-        }
-
-        .policy-split span {
-          color: #6e7972;
-          font-size: 11px;
-        }
-
-        .policy-rules {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 7px;
-        }
-
-        .policy-rules span {
-          padding: 6px 8px;
-          border-radius: 999px;
-          background: rgba(33, 103, 73, 0.07);
-          color: #50685b;
-          font-size: 10px;
-          font-weight: 600;
         }
 
         .target-fit-proof {
@@ -1400,34 +1325,6 @@ function Home() {
             </p>
           </div>
 
-          <aside className="method-card policy-compact">
-            <div className="policy-title-row">
-              <div>
-                <p className="kicker">Decision policy</p>
-                <h3>Best eligible trade wins.</h3>
-              </div>
-
-              <ShieldCheck size={19} />
-            </div>
-
-            <div className="policy-split">
-              <div>
-                <strong>60%</strong>
-                <span>Target fit</span>
-              </div>
-
-              <div>
-                <strong>40%</strong>
-                <span>Market opportunity</span>
-              </div>
-            </div>
-
-            <div className="policy-rules">
-              <span>+7.5pp max</span>
-              <span>Brokerage ≤2%</span>
-              <span>Thesis intact</span>
-            </div>
-          </aside>
         </section>
 
         {error && (
@@ -1570,9 +1467,7 @@ function Results({
           label="Market opportunity"
           value={`${recommendation.tacticalScore.toFixed(
             1,
-          )}/100 · ${friendlyTacticalLabel(
-            recommendation.tacticalLabel,
-          )}`}
+          )}/100`}
         />
       </div>
 
