@@ -17,7 +17,9 @@ export async function getDailySnapshot() {
   })
 }
 
-export async function saveDailySnapshot(snapshot) {
+export async function saveDailySnapshot(
+  snapshot: Record<string, any>,
+) {
   if (!snapshot || typeof snapshot !== 'object') {
     throw new Error('Cannot save an empty daily snapshot')
   }
@@ -31,20 +33,19 @@ export async function saveDailySnapshot(snapshot) {
   }
 
   if (!snapshot.research || typeof snapshot.research !== 'object') {
-    throw new Error('Daily snapshot must include research data')
+    snapshot.research = {}
   }
 
   await store().setJSON(SNAPSHOT_KEY, snapshot)
-
   return snapshot
 }
 
-export function getSnapshotAgeHours(snapshot) {
-  if (!snapshot?.generatedAt) {
-    return Number.POSITIVE_INFINITY
-  }
+export function getTimestampAgeHours(
+  timestamp?: string | null,
+) {
+  if (!timestamp) return Number.POSITIVE_INFINITY
 
-  const generated = new Date(snapshot.generatedAt).getTime()
+  const generated = new Date(timestamp).getTime()
 
   if (!Number.isFinite(generated)) {
     return Number.POSITIVE_INFINITY
@@ -56,8 +57,20 @@ export function getSnapshotAgeHours(snapshot) {
   )
 }
 
+export function getSnapshotAgeHours(snapshot: any) {
+  return getTimestampAgeHours(
+    snapshot?.marketGeneratedAt ?? snapshot?.generatedAt,
+  )
+}
+
+export function getResearchAgeHours(snapshot: any) {
+  return getTimestampAgeHours(
+    snapshot?.researchGeneratedAt,
+  )
+}
+
 export function isSnapshotFresh(
-  snapshot,
+  snapshot: any,
   maxAgeHours = 36,
 ) {
   return getSnapshotAgeHours(snapshot) <= maxAgeHours
