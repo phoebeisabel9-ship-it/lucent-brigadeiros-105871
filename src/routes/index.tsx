@@ -135,23 +135,63 @@ const signed = (value: number) =>
   `${value > 0 ? '+' : ''}${value.toFixed(2)}%`
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...init?.headers,
-    },
-  })
+  let response: Response
 
-  if (!response.ok) {
-    const body = await response
-      .json()
-      .catch(() => ({ error: response.statusText }))
-
-    throw new Error(body.error || 'Request failed')
+  try {
+    response = await fetch(path, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        ...init?.headers,
+      },
+    })
+  } catch (error) {
+    throw new Error(
+      `Could not reach the server: ${
+        error instanceof Error ? error.message : 'Network error'
+      }`,
+    )
   }
 
-  return response.json() as Promise<T>
+  const text = await response.text()
+
+  if (!response.ok) {
+    let message = text
+
+    try {
+      const parsed = JSON.parse(text)
+
+      message =
+        parsed.error ||
+        parsed.message ||
+        parsed.details ||
+        text
+    } catch {
+      // The server returned plain text or HTML.
+    }
+
+    throw new Error(
+      `HTTP ${response.status}: ${
+        message ||
+        response.statusText ||
+        'Unknown server error'
+      }`,
+    )
+  }
+
+  if (!text) {
+    throw new Error(
+      'The server returned an empty response.',
+    )
+  }
+
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    throw new Error(
+      `The server returned an invalid response: ${text.slice(0, 500)}`,
+    )
+  }
 }
 
 function Home() {
