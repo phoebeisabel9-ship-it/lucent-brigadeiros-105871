@@ -165,11 +165,11 @@ const labels: Record<Ticker, string> = {
 }
 
 const tickerColors: Record<Ticker, string> = {
-  IVV: '#216749',
-  DHHF: '#A9C95D',
-  VEU: '#E59A5C',
-  VAS: '#D86E5B',
-  VESG: '#7D91B2',
+  IVV: '#6F8FB3',
+  DHHF: '#D98C7C',
+  VEU: '#D8B25C',
+  VAS: '#A98BB8',
+  VESG: '#7FA6A1',
 }
 
 const money = new Intl.NumberFormat('en-AU', {
@@ -216,6 +216,33 @@ function formatSydneyTimestamp(timestamp?: string) {
     hour: 'numeric',
     minute: '2-digit',
   }).format(new Date(timestamp))
+}
+
+function targetStatus(
+  current: number,
+  target: number,
+) {
+  const difference = current - target
+  const absoluteDifference = Math.abs(difference)
+
+  if (absoluteDifference < 0.005) {
+    return {
+      label: '✓ On target',
+      color: '#4E7A63',
+    }
+  }
+
+  if (difference > 0) {
+    return {
+      label: `↑ Over ${percent(absoluteDifference)}`,
+      color: '#B7783F',
+    }
+  }
+
+  return {
+    label: `↓ Under ${percent(absoluteDifference)}`,
+    color: '#C35F5F',
+  }
 }
 
 function wait(ms: number) {
@@ -1372,29 +1399,23 @@ function AllocationCard({
             {percent(allocation[ticker])}
           </strong>
 
-          {target && (
-            <small
-              className={
-                Math.abs(
-                  allocation[ticker] -
-                    target[ticker],
-                ) < 0.005
-                  ? 'on-target'
-                  : ''
-              }
-            >
-              {allocation[ticker] >
-              target[ticker]
-                ? 'Over'
-                : 'Under'}{' '}
-              {percent(
-                Math.abs(
-                  allocation[ticker] -
-                    target[ticker],
-                ),
-              )}
-            </small>
-          )}
+          {target && (() => {
+            const status = targetStatus(
+              allocation[ticker],
+              target[ticker],
+            )
+
+            return (
+              <small
+                style={{
+                  color: status.color,
+                  fontWeight: 600,
+                }}
+              >
+                {status.label}
+              </small>
+            )
+          })()}
         </div>
       ))}
     </div>
