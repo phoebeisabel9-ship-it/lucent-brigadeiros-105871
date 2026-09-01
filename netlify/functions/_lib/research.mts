@@ -1,182 +1,283 @@
 import OpenAI from 'openai'
+
 import {
   TICKERS,
   type ResearchDatum,
   type Ticker,
 } from './types.mjs'
 
-function parseJson(text: string) {
-  const cleaned = text
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/```$/i, '')
-    .trim()
-
-  return JSON.parse(cleaned) as Record<
-    string,
-    Partial<ResearchDatum>
-  >
+const citationSchema = {
+  type: 'object',
+  properties: {
+    title: {
+      type: 'string',
+    },
+    url: {
+      type: 'string',
+    },
+  },
+  required: [
+    'title',
+    'url',
+  ],
+  additionalProperties: false,
 }
 
-function clampScore(value: unknown) {
-  const score = Number(value)
+const researchItemSchema = {
+  type: 'object',
 
-  return Number.isFinite(score)
-    ? Math.max(-2, Math.min(2, Math.round(score)))
-    : 0
+  properties: {
+    valuationScore: {
+      type: 'integer',
+      minimum: -2,
+      maximum: 2,
+    },
+
+    newsScore: {
+      type: 'integer',
+      minimum: -2,
+      maximum: 2,
+    },
+
+    thesisDisqualified: {
+      type: 'boolean',
+    },
+
+    valuationContext: {
+      type: 'string',
+    },
+
+    developments: {
+      type: 'string',
+    },
+
+    newsSummary: {
+      type: 'string',
+    },
+
+    citations: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 3,
+      items: citationSchema,
+    },
+  },
+
+  required: [
+    'valuationScore',
+    'newsScore',
+    'thesisDisqualified',
+    'valuationContext',
+    'developments',
+    'newsSummary',
+    'citations',
+  ],
+
+  additionalProperties: false,
+}
+
+const researchSchema = {
+  type: 'object',
+
+  properties: {
+    IVV: researchItemSchema,
+    DHHF: researchItemSchema,
+    VEU: researchItemSchema,
+    VAS: researchItemSchema,
+    VESG: researchItemSchema,
+  },
+
+  required: [
+    'IVV',
+    'DHHF',
+    'VEU',
+    'VAS',
+    'VESG',
+  ],
+
+  additionalProperties: false,
+}
+
+function isHttpsUrl(
+  value: string,
+) {
+  return /^https:\/\//i.test(
+    value,
+  )
 }
 
 function validateResearch(
-  parsed: Record<string, Partial<ResearchDatum>>,
-): Record<Ticker, ResearchDatum> {
+  parsed: Record<
+    string,
+    ResearchDatum
+  >,
+): Record<
+  Ticker,
+  ResearchDatum
+> {
   return Object.fromEntries(
-    TICKERS.map((ticker) => {
-      const item = parsed[ticker]
+    TICKERS.map(
+      (ticker) => {
+        const item =
+          parsed[ticker]
 
-      if (!item) {
-        throw new Error(
-          `Research response is missing ${ticker}`,
-        )
-      }
+        if (!item) {
+          throw new Error(
+            `Research response is missing ${ticker}`,
+          )
+        }
 
-      const valuationContext = String(
-        item.valuationContext || '',
-      ).trim()
-
-      const developments = String(
-        item.developments || '',
-      ).trim()
-
-      const newsSummary = String(
-        item.newsSummary || '',
-      ).trim()
-
-      if (
-        !valuationContext ||
-        !developments ||
-        !newsSummary
-      ) {
-        throw new Error(
-          `Research response for ${ticker} is incomplete`,
-        )
-      }
-
-      const citations = Array.isArray(
-        item.citations,
-      )
-        ? item.citations
-            .filter(
-              (
-                citation,
-              ): citation is {
-                title: string
-                url: string
-              } =>
-                Boolean(
-                  citation &&
+        const citations =
+          Array.isArray(
+            item.citations,
+          )
+            ? item.citations
+                .filter(
+                  (
+                    citation,
+                  ) =>
+                    citation &&
                     typeof citation.title ===
                       'string' &&
-                    citation.title.trim() &&
+                    citation.title.trim()
+                      .length > 0 &&
                     typeof citation.url ===
                       'string' &&
-                    /^https:\/\//.test(
+                    isHttpsUrl(
                       citation.url,
                     ),
-                ),
-            )
-            .slice(0, 3)
-        : []
+                )
+                .slice(
+                  0,
+                  3,
+                )
+            : []
 
-      if (citations.length === 0) {
-        throw new Error(
-          `Research response for ${ticker} has no sources`,
-        )
-      }
+        if (
+          citations.length ===
+          0
+        ) {
+          throw new Error(
+            `Research response for ${ticker} has no valid citations`,
+          )
+        }
 
-      return [
-        ticker,
-        {
-          valuationScore: clampScore(
-            item.valuationScore,
-          ),
+        return [
+          ticker,
+          {
+            valuationScore:
+              item.valuationScore,
 
-          newsScore: clampScore(
-            item.newsScore,
-          ),
+            newsScore:
+              item.newsScore,
 
-          thesisDisqualified:
-            item.thesisDisqualified === true,
+            thesisDisqualified:
+              item.thesisDisqualified,
 
-          valuationContext,
+            valuationContext:
+              item.valuationContext,
 
-          developments,
+            developments:
+              item.developments,
 
-          newsSummary,
+            newsSummary:
+              item.newsSummary,
 
-          citations,
-        },
-      ]
-    }),
-  ) as Record<Ticker, ResearchDatum>
+            citations,
+          },
+        ]
+      },
+    ),
+  ) as Record<
+    Ticker,
+    ResearchDatum
+  >
 }
 
 export async function getResearch(): Promise<
-  Record<Ticker, ResearchDatum>
+  Record<
+    Ticker,
+    ResearchDatum
+  >
 > {
-  const client = new OpenAI({
-    /*
-     * This function will run inside a Netlify
-     * Background Function, so it can be allowed
-     * substantially more time than the old
-     * synchronous request.
-     */
-    timeout: 180_000,
-    maxRetries: 1,
-  })
+  const client =
+    new OpenAI({
+      timeout: 180_000,
+      maxRetries: 1,
+    })
 
-  const today = new Date()
-    .toISOString()
-    .slice(0, 10)
+  const today =
+    new Date()
+      .toISOString()
+      .slice(
+        0,
+        10,
+      )
 
   const model =
-    process.env.OPENAI_RESEARCH_MODEL ||
+    process.env
+      .OPENAI_RESEARCH_MODEL ||
     'gpt-5.6-luna'
 
   console.log(
     `Starting daily ETF research using ${model}`,
   )
 
-  const response = await client.responses.create({
-    model,
+  const response =
+    await client.responses.create({
+      model,
 
-    reasoning: {
-      effort: 'none',
-    },
-
-    max_output_tokens: 2500,
-
-    tools: [
-      {
-        type: 'web_search_preview',
-        search_context_size: 'medium',
+      reasoning: {
+        effort: 'none',
       },
-    ],
 
-    input: `
+      /*
+       * Web search is the actual
+       * research layer.
+       */
+      tools: [
+        {
+          type: 'web_search',
+        },
+      ],
+
+      /*
+       * Structured Outputs forces
+       * the final answer to match
+       * our JSON schema.
+       */
+      text: {
+        format: {
+          type: 'json_schema',
+
+          name:
+            'etf_daily_research',
+
+          strict: true,
+
+          schema:
+            researchSchema,
+        },
+      },
+
+      max_output_tokens:
+        3000,
+
+      input: `
 Today is ${today}.
 
 Research these ASX-listed ETFs:
 
-- IVV
-- DHHF
-- VEU
-- VAS
-- VESG
+IVV
+DHHF
+VEU
+VAS
+VESG
 
-This research will be used as the tactical 20% layer
-of a long-term portfolio rebalancing model.
+This research is used as the tactical layer of a
+long-term portfolio rebalancing model.
 
-The strategic target allocation is:
+The fixed strategic target is:
 
 IVV 35%
 DHHF 30%
@@ -184,38 +285,56 @@ VEU 15%
 VAS 10%
 VESG 10%
 
-Do NOT recommend which ETF to buy.
+Do NOT make an allocation or buy recommendation.
 
-For EACH ETF, research:
+For EACH ETF assess:
 
 1. VALUATION
+
 Assess the valuation of the underlying market or
 portfolio relative to its own history and comparable
-markets where reliable information is available.
+markets where reliable data exists.
+
+Use actual valuation evidence where available,
+including measures such as:
+
+- price/earnings
+- forward price/earnings
+- earnings yield
+- price/book
+- dividend yield
+- issuer or index valuation data
+
+Do not invent valuation statistics.
 
 2. DEVELOPMENTS
-Identify material developments affecting the ETF,
-its index, or its underlying market.
 
-3. LAST 7 DAYS OF NEWS
-Identify significant macroeconomic, central-bank,
-earnings, geopolitical or market news from the
-previous 7 calendar days that is relevant to the ETF.
+Identify material developments affecting:
 
-Use current web research.
+- the ETF
+- its index
+- its underlying markets
+- major sectors or geographic exposures
 
-Prefer authoritative and high-quality sources such as:
+Ignore routine commentary.
+
+3. PREVIOUS 7 DAYS OF NEWS
+
+Identify important market, macroeconomic,
+central-bank, earnings, geopolitical or regulatory
+developments published during the previous
+7 calendar days that are materially relevant to the ETF.
+
+Prefer authoritative sources:
 
 - ETF issuers
 - index providers
 - ASX
 - central banks
 - regulators
-- official economic data
+- government economic data
 - Reuters
 - other high-quality financial reporting
-
-Ignore routine commentary and low-quality speculation.
 
 SCORING
 
@@ -235,105 +354,58 @@ newsScore:
 -1 = mildly negative
 -2 = materially negative
 
-thesisDisqualified should be TRUE only if a genuine
-structural or thesis-changing negative development
-means that simply "buying the dip" would be
-inappropriate.
+thesisDisqualified:
 
-A normal market decline, recession fear, rate move,
-geopolitical volatility or ordinary earnings weakness
-should NOT automatically be considered
+Set true ONLY for a genuine structural or
+thesis-changing negative event.
+
+Ordinary market volatility, recession fears,
+interest-rate changes, geopolitical volatility or
+short-term earnings weakness are NOT by themselves
 thesis-disqualifying.
 
-Return ONLY valid JSON.
+Keep valuationContext, developments and newsSummary
+concise but informative.
 
-Use exactly this structure:
+Include 1–3 real source URLs for EACH ETF.
 
-{
-  "IVV": {
-    "valuationScore": 0,
-    "newsScore": 0,
-    "thesisDisqualified": false,
-    "valuationContext": "One concise but informative sentence.",
-    "developments": "One concise but informative sentence.",
-    "newsSummary": "One concise but informative sentence.",
-    "citations": [
-      {
-        "title": "Source title",
-        "url": "https://..."
-      }
-    ]
-  },
-  "DHHF": {
-    "valuationScore": 0,
-    "newsScore": 0,
-    "thesisDisqualified": false,
-    "valuationContext": "",
-    "developments": "",
-    "newsSummary": "",
-    "citations": []
-  },
-  "VEU": {
-    "valuationScore": 0,
-    "newsScore": 0,
-    "thesisDisqualified": false,
-    "valuationContext": "",
-    "developments": "",
-    "newsSummary": "",
-    "citations": []
-  },
-  "VAS": {
-    "valuationScore": 0,
-    "newsScore": 0,
-    "thesisDisqualified": false,
-    "valuationContext": "",
-    "developments": "",
-    "newsSummary": "",
-    "citations": []
-  },
-  "VESG": {
-    "valuationScore": 0,
-    "newsScore": 0,
-    "thesisDisqualified": false,
-    "valuationContext": "",
-    "developments": "",
-    "newsSummary": "",
-    "citations": []
-  }
-}
+Do not recommend what I should buy.
+      `.trim(),
+    })
 
-Each ETF must include at least one real source URL.
-
-Do not include markdown fences or text outside the
-JSON object.
-    `.trim(),
-  })
-
-  if (!response.output_text) {
+  if (
+    !response.output_text
+  ) {
     throw new Error(
-      'Research provider returned no text',
+      'Research provider returned no output',
     )
   }
 
   let parsed: Record<
     string,
-    Partial<ResearchDatum>
+    ResearchDatum
   >
 
   try {
-    parsed = parseJson(response.output_text)
-  } catch (error) {
+    parsed =
+      JSON.parse(
+        response.output_text,
+      )
+  } catch {
     console.error(
-      'Unreadable research response:',
+      'Structured research output could not be parsed:',
       response.output_text,
     )
 
     throw new Error(
-      'Research provider returned invalid JSON',
+      'Structured research output could not be parsed',
     )
   }
 
-  const research = validateResearch(parsed)
+  const research =
+    validateResearch(
+      parsed,
+    )
 
   console.log(
     'Daily ETF research completed successfully',
