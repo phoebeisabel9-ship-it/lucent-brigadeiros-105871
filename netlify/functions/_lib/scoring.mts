@@ -7,18 +7,16 @@ import {
   type Ticker,
 } from './types.mjs'
 
-const STRATEGIC_WEIGHT = 0.6
-const TACTICAL_WEIGHT = 0.4
+const PORTFOLIO_PRIORITY_WEIGHT = 0.6
+const MARKET_OPPORTUNITY_WEIGHT = 0.4
 const HARD_OVERWEIGHT_BUFFER = 0.075
 const MAX_BROKERAGE_DRAG = 0.02
 
-const TACTICAL_WEIGHTS = {
+const OPPORTUNITY_WEIGHTS = {
   week: 0.3,
-  month: 0.2,
-  quarter: 0.1,
-  drawdown52Week: 0.2,
-  valuation: 0.15,
-  news: 0.05,
+  month: 0.25,
+  quarter: 0.15,
+  drawdown52Week: 0.3,
 } as const
 
 type MarketWithSnapshot = MarketDatum & {
@@ -46,15 +44,6 @@ function allocation(values: Record<Ticker, number>) {
   ) as Record<Ticker, number>
 }
 
-/*
- * L1 distance from the target portfolio.
- *
- * Because both allocations sum to 1, the theoretical range is 0 to 2.
- * That lets the strategic score have a true absolute 0-100 meaning:
- *
- * 100 = exact target allocation
- *   0 = maximum possible distance from target
- */
 function alignmentError(
   allocationValue: Record<Ticker, number>,
 ) {
@@ -69,48 +58,57 @@ function alignmentError(
 }
 
 /*
- * Candidate Target Fit: absolute 0-100.
+ * Portfolio Priority: absolute 0-100.
  *
- * 100 = this ETF lands exactly on its target after the proposed trade.
- *  50 = its post-trade weight is 50% of its target away from target.
- *   0 = its post-trade weight is at least 100% of its target away.
+ * 100 = maximally underweight (0% allocation with a positive target)
+ *  50 = exactly on target
+ *   0 = at or beyond the hard overweight cap
  *
- * Example:
- * VAS target = 10%.
- * A post-trade VAS weight of 20%+ scores 0 because it is at least
- * 100% above its target.
+ * The same formula is applied independently to every ETF using
+ * that ETF's own target.
  */
-function targetFitScore(
+function portfolioPriorityScore(
   ticker: Ticker,
   allocationValue: Record<Ticker, number>,
 ) {
   const target = TARGETS[ticker]
+  const current = allocationValue[ticker]
 
   if (target <= 0) return 0
 
-  const relativeDeviation =
-    Math.abs(
-      allocationValue[ticker] -
-        target,
-    ) / target
+  if (current <= target) {
+    const underweightFraction = clamp(
+      (target - current) / target,
+      0,
+      1,
+    )
+
+    return round(
+      50 + underweightFraction * 50,
+    )
+  }
+
+  const overweightFraction = clamp(
+    (current - target) /
+      HARD_OVERWEIGHT_BUFFER,
+    0,
+    1,
+  )
 
   return round(
-    clamp(
-      (1 - relativeDeviation) *
-        100,
-      0,
-      100,
-    ),
+    50 - overweightFraction * 50,
   )
 }
 
 /*
- * Converts a return into a 0-100 "sale" score.
+ * Price-opportunity score.
  *
- * Example for the 1W signal:
+ * For 1W:
  * +5% = 0
  *  0% = 50
  * -5% = 100
+ *
+ * The 1M and 3M signals use wider ranges.
  */
 function returnOpportunityScore(
   returnPct: number,
@@ -119,7 +117,8 @@ function returnOpportunityScore(
   return round(
     clamp(
       50 -
-        (returnPct / fullSignalAt) * 50,
+        (returnPct / fullSignalAt) *
+          50,
       0,
       100,
     ),
@@ -127,44 +126,23 @@ function returnOpportunityScore(
 }
 
 /*
- * 52W drawdown sale score:
- *  0% drawdown = 0
- *  7.5% down   = 50
- * 15%+ down    = 100
+ * 52W drawdown:
+ * 0% down = 0
+ * 7.5% down = 50
+ * 15%+ down = 100
  */
 function drawdownOpportunityScore(
   drawdownPct: number,
 ) {
   return round(
-    clamp((drawdownPct / 15) * 100, 0, 100),
+    clamp(
+      (drawdownPct / 15) * 100,
+      0,
+      100,
+    ),
   )
 }
 
-/*
- * Research scores are supplied on a -2 to +2 scale.
- *
- * -2 = very unattractive
- *  0 = neutral
- * +2 = very attractive
- */
-function researchOpportunityScore(
-  score: number,
-) {
-  return round(
-    clamp(((score + 2) / 4) * 100, 0, 100),
-  )
-}
-
-/*
- * The daily snapshot contains:
- * - snapshot price
- * - 1W / 1M / 3M returns measured at that snapshot price
- *
- * Analyse later supplies the current/latest price.
- *
- * From the cached return we can infer the period-start reference price,
- * then recalculate the return using the current price.
- */
 function liveAdjustedReturn(
   snapshotPrice: number,
   currentPrice: number,
@@ -193,48 +171,35 @@ function liveAdjustedReturn(
   )
 }
 
-function tacticalLabel(score: number) {
-  if (score >= 85) {
-    return 'Exceptional opportunity'
-  }
-
-  if (score >= 70) {
-    return 'Strong opportunity'
-  }
-
-  if (score >= 55) {
-    return 'Moderate opportunity'
-  }
-
-  if (score >= 45) {
-    return 'Neutral'
-  }
-
-  if (score >= 30) {
-    return 'Limited opportunity'
-  }
-
+function opportunityLabel(score: number) {
+  if (score >= 85) return 'Exceptional opportunity'
+  if (score >= 70) return 'Strong opportunity'
+  if (score >= 55) return 'Moderate opportunity'
+  if (score >= 45) return 'Neutral'
+  if (score >= 30) return 'Limited opportunity'
   return 'Low opportunity'
 }
 
 function overallLabel(score: number) {
-  if (score >= 85) {
-    return 'Very strong'
-  }
-
-  if (score >= 70) {
-    return 'Strong'
-  }
-
-  if (score >= 55) {
-    return 'Moderate'
-  }
-
-  if (score >= 40) {
-    return 'Weak'
-  }
-
+  if (score >= 85) return 'Very strong'
+  if (score >= 70) return 'Strong'
+  if (score >= 55) return 'Moderate'
+  if (score >= 40) return 'Weak'
   return 'Very weak'
+}
+
+function allocationForTrade(
+  beforeValues: Record<Ticker, number>,
+  ticker: Ticker,
+  units: number,
+  price: number,
+) {
+  return allocation({
+    ...beforeValues,
+    [ticker]:
+      beforeValues[ticker] +
+      units * price,
+  })
 }
 
 export function analyseTrades(
@@ -347,6 +312,10 @@ export function analyseTrades(
             )
           : datum.drawdown52Week
 
+      /*
+       * Market Opportunity is 100% deterministic.
+       * No AI valuation or news scores are used.
+       */
       const tacticalComponents = {
         week: {
           rawValue: round(
@@ -359,7 +328,7 @@ export function analyseTrades(
               5,
             ),
           weight:
-            TACTICAL_WEIGHTS.week,
+            OPPORTUNITY_WEIGHTS.week,
         },
 
         month: {
@@ -373,7 +342,7 @@ export function analyseTrades(
               10,
             ),
           weight:
-            TACTICAL_WEIGHTS.month,
+            OPPORTUNITY_WEIGHTS.month,
         },
 
         quarter: {
@@ -387,7 +356,7 @@ export function analyseTrades(
               15,
             ),
           weight:
-            TACTICAL_WEIGHTS.quarter,
+            OPPORTUNITY_WEIGHTS.quarter,
         },
 
         drawdown52Week: {
@@ -400,49 +369,33 @@ export function analyseTrades(
               adjustedDrawdown52Week,
             ),
           weight:
-            TACTICAL_WEIGHTS.drawdown52Week,
-        },
-
-        valuation: {
-          rawValue:
-            researchDatum.valuationScore,
-          score:
-            researchOpportunityScore(
-              researchDatum.valuationScore,
-            ),
-          weight:
-            TACTICAL_WEIGHTS.valuation,
-        },
-
-        news: {
-          rawValue:
-            researchDatum.newsScore,
-          score:
-            researchOpportunityScore(
-              researchDatum.newsScore,
-            ),
-          weight:
-            TACTICAL_WEIGHTS.news,
+            OPPORTUNITY_WEIGHTS.drawdown52Week,
         },
       }
 
-      const tacticalScore = round(
-        tacticalComponents.week.score *
-          tacticalComponents.week.weight +
-          tacticalComponents.month.score *
-            tacticalComponents.month.weight +
-          tacticalComponents.quarter.score *
-            tacticalComponents.quarter.weight +
-          tacticalComponents.drawdown52Week
-            .score *
-            tacticalComponents
-              .drawdown52Week.weight +
-          tacticalComponents.valuation.score *
-            tacticalComponents.valuation
-              .weight +
-          tacticalComponents.news.score *
-            tacticalComponents.news.weight,
-      )
+      const marketOpportunityScore =
+        round(
+          tacticalComponents.week.score *
+            tacticalComponents.week.weight +
+            tacticalComponents.month.score *
+              tacticalComponents.month.weight +
+            tacticalComponents.quarter.score *
+              tacticalComponents.quarter.weight +
+            tacticalComponents.drawdown52Week
+              .score *
+              tacticalComponents
+                .drawdown52Week.weight,
+        )
+
+      /*
+       * Portfolio Priority uses the CURRENT, pre-trade allocation.
+       * This answers: which ETF most needs the next contribution?
+       */
+      const priorityScore =
+        portfolioPriorityScore(
+          ticker,
+          beforeAllocation,
+        )
 
       const investableCash =
         Math.max(
@@ -461,38 +414,144 @@ export function analyseTrades(
         TARGETS[ticker] +
         HARD_OVERWEIGHT_BUFFER
 
+      const minimumEfficientUnits =
+        balances.brokerage > 0
+          ? Math.max(
+              1,
+              Math.ceil(
+                balances.brokerage /
+                  (MAX_BROKERAGE_DRAG *
+                    currentPrice),
+              ),
+            )
+          : 1
+
       /*
-       * Start with the maximum affordable whole-unit trade.
-       * If that would breach the hard portfolio cap, step the
-       * unit count down until the largest permitted trade is found.
+       * Find all whole-unit trades that are:
+       * - affordable
+       * - under the hard overweight cap
+       * - brokerage-efficient (<=2%)
        */
-      let units =
-        maxAffordableUnits
+      const permittedTrades:
+        Array<{
+          units: number
+          allocation: Record<Ticker, number>
+          brokerageDrag: number
+        }> = []
 
-      while (units > 0) {
-        const testAmount =
-          units * currentPrice
-
-        const testValues = {
-          ...beforeValues,
-          [ticker]:
-            beforeValues[ticker] +
-            testAmount,
-        }
-
-        const testAllocation =
-          allocation(testValues)
+      for (
+        let candidateUnits = 1;
+        candidateUnits <=
+        maxAffordableUnits;
+        candidateUnits += 1
+      ) {
+        const candidateAllocation =
+          allocationForTrade(
+            beforeValues,
+            ticker,
+            candidateUnits,
+            currentPrice,
+          )
 
         if (
-          testAllocation[ticker] <=
+          candidateAllocation[ticker] >
           hardOverweightCap +
             Number.EPSILON
         ) {
-          break
+          continue
         }
 
-        units -= 1
+        const candidateInvestment =
+          candidateUnits *
+          currentPrice
+
+        const candidateBrokerageDrag =
+          candidateInvestment > 0
+            ? balances.brokerage /
+              candidateInvestment
+            : Number.POSITIVE_INFINITY
+
+        if (
+          candidateBrokerageDrag >
+          MAX_BROKERAGE_DRAG
+        ) {
+          continue
+        }
+
+        permittedTrades.push({
+          units:
+            candidateUnits,
+          allocation:
+            candidateAllocation,
+          brokerageDrag:
+            candidateBrokerageDrag,
+        })
       }
+
+      /*
+       * Trade sizing:
+       *
+       * UNDER TARGET:
+       * choose the permitted whole-unit trade that gets closest to target.
+       *
+       * AT / OVER TARGET:
+       * choose only the smallest brokerage-efficient permitted trade.
+       * This lets a true "sale" win without pushing an overweight ETF
+       * unnecessarily toward its hard cap.
+       */
+      let selectedTrade:
+        | {
+            units: number
+            allocation: Record<Ticker, number>
+            brokerageDrag: number
+          }
+        | undefined
+
+      if (
+        permittedTrades.length >
+        0
+      ) {
+        if (
+          beforeAllocation[ticker] <
+          TARGETS[ticker]
+        ) {
+          selectedTrade = [
+            ...permittedTrades,
+          ].sort(
+            (a, b) => {
+              const aDistance =
+                Math.abs(
+                  a.allocation[ticker] -
+                    TARGETS[ticker],
+                )
+
+              const bDistance =
+                Math.abs(
+                  b.allocation[ticker] -
+                    TARGETS[ticker],
+                )
+
+              return (
+                aDistance -
+                  bDistance ||
+                b.units -
+                  a.units
+              )
+            },
+          )[0]
+        } else {
+          selectedTrade = [
+            ...permittedTrades,
+          ].sort(
+            (a, b) =>
+              a.units -
+              b.units,
+          )[0]
+        }
+      }
+
+      const units =
+        selectedTrade?.units ?? 0
 
       const amountInvested =
         round(
@@ -500,9 +559,8 @@ export function analyseTrades(
         )
 
       const brokerageDrag =
-        amountInvested > 0
-          ? balances.brokerage /
-            amountInvested
+        selectedTrade
+          ? selectedTrade.brokerageDrag
           : Number.POSITIVE_INFINITY
 
       const cashUsed =
@@ -519,41 +577,26 @@ export function analyseTrades(
             cashUsed,
         )
 
-      const afterValues = {
-        ...beforeValues,
-        [ticker]:
-          beforeValues[ticker] +
-          amountInvested,
-      }
-
       const afterAllocation =
-        allocation(afterValues)
+        selectedTrade?.allocation ??
+        beforeAllocation
 
       const afterError =
-        alignmentError(afterAllocation)
-
-      const beforeStrategicScore =
-        targetFitScore(
-          ticker,
-          beforeAllocation,
-        )
-
-      const strategicScore =
-        targetFitScore(
-          ticker,
+        alignmentError(
           afterAllocation,
         )
 
+      const improvement =
+        beforeError -
+        afterError
+
       const overallScore =
         round(
-          strategicScore *
-            STRATEGIC_WEIGHT +
-            tacticalScore *
-              TACTICAL_WEIGHT,
+          priorityScore *
+            PORTFOLIO_PRIORITY_WEIGHT +
+            marketOpportunityScore *
+              MARKET_OPPORTUNITY_WEIGHT,
         )
-
-      const improvement =
-        beforeError - afterError
 
       const disqualificationReasons:
         string[] = []
@@ -564,44 +607,60 @@ export function analyseTrades(
         disqualificationReasons.push(
           'Insufficient cash for one whole unit after brokerage.',
         )
-      } else if (units < 1) {
-        disqualificationReasons.push(
-          `No additional whole unit can be purchased without exceeding the ${round(
-            hardOverweightCap * 100,
-            1,
-          )}% hard cap for ${ticker}.`,
-        )
-      }
-
-      if (
-        units > 0 &&
-        brokerageDrag >
-          MAX_BROKERAGE_DRAG
+      } else if (
+        permittedTrades.length <
+        1
       ) {
-        disqualificationReasons.push(
-          `The largest guardrail-compliant trade is only ${units} whole unit${units === 1 ? '' : 's'} ($${amountInvested.toFixed(
-            2,
-          )}), making $${balances.brokerage.toFixed(
-            2,
-          )} brokerage ${round(
-            brokerageDrag * 100,
-            2,
-          )}% of the investment — above the ${round(
-            MAX_BROKERAGE_DRAG *
-              100,
-            0,
-          )}% efficiency limit.`,
-        )
+        const anyUnderHardCap =
+          Array.from(
+            {
+              length:
+                maxAffordableUnits,
+            },
+            (_, index) =>
+              index + 1,
+          ).some(
+            (candidateUnits) =>
+              allocationForTrade(
+                beforeValues,
+                ticker,
+                candidateUnits,
+                currentPrice,
+              )[ticker] <=
+              hardOverweightCap +
+                Number.EPSILON,
+          )
+
+        if (!anyUnderHardCap) {
+          disqualificationReasons.push(
+            `No additional whole unit can be purchased without exceeding the ${round(
+              hardOverweightCap *
+                100,
+              1,
+            )}% hard cap for ${ticker}.`,
+          )
+        } else {
+          disqualificationReasons.push(
+            `No guardrail-compliant trade is large enough to keep $${balances.brokerage.toFixed(
+              2,
+            )} brokerage at or below ${round(
+              MAX_BROKERAGE_DRAG *
+                100,
+              0,
+            )}% of the investment. Minimum efficient size is approximately ${minimumEfficientUnits} unit${
+              minimumEfficientUnits ===
+              1
+                ? ''
+                : 's'
+            }.`,
+          )
+        }
       }
 
-      if (
-        researchDatum.thesisDisqualified
-      ) {
-        disqualificationReasons.push(
-          'Material thesis-changing negative development identified.',
-        )
-      }
-
+      /*
+       * AI research is context only.
+       * It does NOT change scoring, ranking or eligibility.
+       */
       const disqualificationReason =
         disqualificationReasons.length
           ? disqualificationReasons.join(
@@ -676,6 +735,8 @@ export function analyseTrades(
 
         maxAffordableUnits,
 
+        minimumEfficientUnits,
+
         price: round(
           currentPrice,
           4,
@@ -727,15 +788,24 @@ export function analyseTrades(
 
         improvement,
 
-        beforeStrategicScore,
+        portfolioPriorityScore:
+          priorityScore,
 
-        strategicScore,
+        /*
+         * Alias retained so the existing API/frontend migration
+         * stays backwards-compatible.
+         */
+        strategicScore:
+          priorityScore,
 
-        tacticalScore,
+        marketOpportunityScore,
+
+        tacticalScore:
+          marketOpportunityScore,
 
         tacticalLabel:
-          tacticalLabel(
-            tacticalScore,
+          opportunityLabel(
+            marketOpportunityScore,
           ),
 
         overallScore,
@@ -747,9 +817,9 @@ export function analyseTrades(
 
         scoreWeights: {
           strategic:
-            STRATEGIC_WEIGHT,
+            PORTFOLIO_PRIORITY_WEIGHT,
           tactical:
-            TACTICAL_WEIGHT,
+            MARKET_OPPORTUNITY_WEIGHT,
         },
 
         tacticalComponents,
@@ -768,6 +838,9 @@ export function analyseTrades(
 
         research:
           researchDatum,
+
+        researchAffectsRecommendation:
+          false,
       }
     },
   )
@@ -780,7 +853,7 @@ export function analyseTrades(
 
   if (!eligible.length) {
     throw new Error(
-      'No ETF is eligible under the affordability, brokerage-efficiency, thesis and hard-overweight guardrails.',
+      'No ETF is eligible under the affordability, brokerage-efficiency and hard-overweight guardrails.',
     )
   }
 
@@ -790,112 +863,102 @@ export function analyseTrades(
     (a, b) =>
       b.overallScore -
         a.overallScore ||
-      b.strategicScore -
-        a.strategicScore ||
-      b.tacticalScore -
-        a.tacticalScore,
+      b.portfolioPriorityScore -
+        a.portfolioPriorityScore ||
+      b.marketOpportunityScore -
+        a.marketOpportunityScore,
   )
 
   const recommendation =
     rankedEligible[0]
 
   const comparisons =
-    simulations.map((item) => {
-      let whyItLost: string
+    simulations.map((item) => ({
+      ticker:
+        item.ticker,
 
-      if (
-        item.ticker ===
-        recommendation.ticker
-      ) {
-        whyItLost =
-          'Recommended.'
-      } else if (!item.eligible) {
-        whyItLost =
-          item.disqualificationReason ??
-          'Disqualified by a portfolio guardrail.'
-      } else {
-        whyItLost =
-          `${recommendation.ticker} scored ${recommendation.overallScore}/100 overall versus ${item.overallScore}/100 for ${item.ticker}.`
-      }
+      eligible:
+        item.eligible,
 
-      return {
-        ticker: item.ticker,
+      units:
+        item.units,
 
-        eligible:
-          item.eligible,
+      maxAffordableUnits:
+        item.maxAffordableUnits,
 
-        units:
-          item.units,
+      minimumEfficientUnits:
+        item.minimumEfficientUnits,
 
-        maxAffordableUnits:
-          item.maxAffordableUnits,
+      price:
+        item.price,
 
-        price:
-          item.price,
+      snapshotPrice:
+        item.snapshotPrice,
 
-        brokerageDrag:
-          item.brokerageDrag,
+      brokerageDrag:
+        item.brokerageDrag,
 
-        maxBrokerageDragPct:
-          item.maxBrokerageDragPct,
+      maxBrokerageDragPct:
+        item.maxBrokerageDragPct,
 
-        snapshotPrice:
-          item.snapshotPrice,
+      alignmentImprovement:
+        round(
+          item.improvement *
+            100,
+          3,
+        ),
 
-        alignmentImprovement:
-          round(
-            item.improvement * 100,
-            3,
-          ),
+      beforeAllocation:
+        item.beforeAllocation,
 
-        beforeAllocation:
-          item.beforeAllocation,
+      afterAllocation:
+        item.afterAllocation,
 
-        afterAllocation:
-          item.afterAllocation,
+      portfolioPriorityScore:
+        item.portfolioPriorityScore,
 
-        beforeStrategicScore:
-          item.beforeStrategicScore,
+      strategicScore:
+        item.strategicScore,
 
-        strategicScore:
-          item.strategicScore,
+      marketOpportunityScore:
+        item.marketOpportunityScore,
 
-        tacticalScore:
-          item.tacticalScore,
+      tacticalScore:
+        item.tacticalScore,
 
-        tacticalLabel:
-          item.tacticalLabel,
+      tacticalLabel:
+        item.tacticalLabel,
 
-        overallScore:
-          item.overallScore,
+      overallScore:
+        item.overallScore,
 
-        overallLabel:
-          item.overallLabel,
+      overallLabel:
+        item.overallLabel,
 
-        scoreWeights:
-          item.scoreWeights,
+      scoreWeights:
+        item.scoreWeights,
 
-        tacticalComponents:
-          item.tacticalComponents,
+      tacticalComponents:
+        item.tacticalComponents,
 
-        hardOverweightCap:
-          item.hardOverweightCap,
+      hardOverweightCap:
+        item.hardOverweightCap,
 
-        disqualificationReason:
-          item.disqualificationReason,
+      disqualificationReason:
+        item.disqualificationReason,
 
-        disqualificationReasons:
-          item.disqualificationReasons,
+      disqualificationReasons:
+        item.disqualificationReasons,
 
-        whyItLost,
+      market:
+        item.market,
 
-        market:
-          item.market,
+      research:
+        item.research,
 
-        research:
-          item.research,
-      }
-    })
+      researchAffectsRecommendation:
+        false,
+    }))
 
   return {
     generatedAt:
@@ -906,10 +969,10 @@ export function analyseTrades(
 
     scoringModel: {
       strategicWeight:
-        STRATEGIC_WEIGHT,
+        PORTFOLIO_PRIORITY_WEIGHT,
 
       tacticalWeight:
-        TACTICAL_WEIGHT,
+        MARKET_OPPORTUNITY_WEIGHT,
 
       hardOverweightBuffer:
         HARD_OVERWEIGHT_BUFFER,
@@ -917,17 +980,20 @@ export function analyseTrades(
       maxBrokerageDrag:
         MAX_BROKERAGE_DRAG,
 
+      portfolioPriorityScale:
+        'Absolute 0-100 applied independently to every ETF using its current pre-trade allocation and its own target. 100 = maximally underweight, 50 = exactly on target, 0 = at or beyond the hard overweight cap.',
+
+      marketOpportunityScale:
+        'Absolute 0-100 based only on live-adjusted 1W, 1M, 3M and 52W drawdown price signals. AI research does not affect the recommendation.',
+
       tradeSizing:
-        'For each ETF, use the largest whole-unit trade that fits both available cash and the hard overweight cap; then require brokerage to be no more than 2% of the amount invested.',
-
-      strategicScale:
-        'Absolute Target Fit 0-100 applied independently to every ETF using that ETF’s own target. 100 means the candidate lands exactly on its target after the proposed trade; 0 means it is at least 100% of its target away from target.',
-
-      tacticalScale:
-        'Absolute 0-100. 50 is broadly neutral; 100 is an exceptional tactical opportunity.',
+        'Underweight ETFs use the brokerage-efficient whole-unit trade that lands closest to target. ETFs already at or above target use the smallest brokerage-efficient permitted trade if market opportunity still makes them the winner.',
 
       currentPriceAdjustment:
         '1W, 1M, 3M and 52W drawdown are recalculated using the current/latest price at analysis time.',
+
+      researchAffectsRecommendation:
+        false,
     },
 
     recommendation: {
@@ -936,26 +1002,11 @@ export function analyseTrades(
       reason:
         `${recommendation.ticker} has the highest eligible score at ${recommendation.overallScore.toFixed(
           1,
-        )}/100, combining ${recommendation.strategicScore.toFixed(
+        )}/100, combining ${recommendation.portfolioPriorityScore.toFixed(
           1,
-        )}/100 target fit with ${recommendation.tacticalScore.toFixed(
+        )}/100 portfolio priority with ${recommendation.marketOpportunityScore.toFixed(
           1,
         )}/100 market opportunity.`,
-
-      whyItBeatAlternatives:
-        comparisons
-          .filter(
-            (item) =>
-              item.ticker !==
-              recommendation.ticker,
-          )
-          .map((item) => ({
-            ticker:
-              item.ticker,
-
-            reason:
-              item.whyItLost,
-          })),
     },
 
     comparisons,
