@@ -68,9 +68,39 @@ function alignmentError(
   )
 }
 
-function strategicScoreFromError(error: number) {
+/*
+ * Candidate Target Fit: absolute 0-100.
+ *
+ * 100 = this ETF lands exactly on its target after the proposed trade.
+ *  50 = its post-trade weight is 50% of its target away from target.
+ *   0 = its post-trade weight is at least 100% of its target away.
+ *
+ * Example:
+ * VAS target = 10%.
+ * A post-trade VAS weight of 20%+ scores 0 because it is at least
+ * 100% above its target.
+ */
+function targetFitScore(
+  ticker: Ticker,
+  allocationValue: Record<Ticker, number>,
+) {
+  const target = TARGETS[ticker]
+
+  if (target <= 0) return 0
+
+  const relativeDeviation =
+    Math.abs(
+      allocationValue[ticker] -
+        target,
+    ) / target
+
   return round(
-    clamp((1 - error / 2) * 100, 0, 100),
+    clamp(
+      (1 - relativeDeviation) *
+        100,
+      0,
+      100,
+    ),
   )
 }
 
@@ -169,18 +199,22 @@ function tacticalLabel(score: number) {
   }
 
   if (score >= 70) {
-    return 'Attractive'
+    return 'Strong opportunity'
+  }
+
+  if (score >= 55) {
+    return 'Moderate opportunity'
   }
 
   if (score >= 45) {
-    return 'Neutral / mixed'
+    return 'Neutral'
   }
 
   if (score >= 30) {
-    return 'Unattractive'
+    return 'Limited opportunity'
   }
 
-  return 'Very unattractive'
+  return 'Low opportunity'
 }
 
 function overallLabel(score: number) {
@@ -229,9 +263,6 @@ export function analyseTrades(
 
   const beforeError =
     alignmentError(beforeAllocation)
-
-  const beforeStrategicScore =
-    strategicScoreFromError(beforeError)
 
   const simulations = TICKERS.map(
     (ticker) => {
@@ -501,9 +532,16 @@ export function analyseTrades(
       const afterError =
         alignmentError(afterAllocation)
 
+      const beforeStrategicScore =
+        targetFitScore(
+          ticker,
+          beforeAllocation,
+        )
+
       const strategicScore =
-        strategicScoreFromError(
-          afterError,
+        targetFitScore(
+          ticker,
+          afterAllocation,
         )
 
       const overallScore =
@@ -810,6 +848,12 @@ export function analyseTrades(
             3,
           ),
 
+        beforeAllocation:
+          item.beforeAllocation,
+
+        afterAllocation:
+          item.afterAllocation,
+
         beforeStrategicScore:
           item.beforeStrategicScore,
 
@@ -877,7 +921,7 @@ export function analyseTrades(
         'For each ETF, use the largest whole-unit trade that fits both available cash and the hard overweight cap; then require brokerage to be no more than 2% of the amount invested.',
 
       strategicScale:
-        'Absolute 0-100. 100 means the post-trade portfolio exactly matches target allocation.',
+        'Absolute Target Fit 0-100 applied independently to every ETF using that ETF’s own target. 100 means the candidate lands exactly on its target after the proposed trade; 0 means it is at least 100% of its target away from target.',
 
       tacticalScale:
         'Absolute 0-100. 50 is broadly neutral; 100 is an exceptional tactical opportunity.',
@@ -890,8 +934,13 @@ export function analyseTrades(
       ...recommendation,
 
       reason:
-        `${recommendation.ticker} has the highest eligible overall score at ${recommendation.overallScore}/100: ` +
-        `${recommendation.strategicScore}/100 strategic and ${recommendation.tacticalScore}/100 tactical.`,
+        `${recommendation.ticker} has the highest eligible score at ${recommendation.overallScore.toFixed(
+          1,
+        )}/100, combining ${recommendation.strategicScore.toFixed(
+          1,
+        )}/100 target fit with ${recommendation.tacticalScore.toFixed(
+          1,
+        )}/100 market opportunity.`,
 
       whyItBeatAlternatives:
         comparisons
