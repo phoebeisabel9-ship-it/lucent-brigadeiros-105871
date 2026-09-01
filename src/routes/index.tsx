@@ -81,6 +81,8 @@ type Comparison = {
   brokerageDrag?: number | null
   maxBrokerageDragPct?: number
   alignmentImprovement: number
+  beforeAllocation?: Allocation
+  afterAllocation?: Allocation
   beforeStrategicScore?: number
   strategicScore: number
   tacticalScore: number
@@ -293,15 +295,14 @@ function targetStatus(
 function friendlyTacticalLabel(label?: string) {
   if (!label) return ''
 
-  if (label === 'Unattractive') {
-    return 'Limited opportunity'
+  const replacements: Record<string, string> = {
+    Unattractive: 'Limited opportunity',
+    'Very unattractive': 'Low opportunity',
+    Attractive: 'Strong opportunity',
+    'Neutral / mixed': 'Neutral',
   }
 
-  if (label === 'Very unattractive') {
-    return 'Low opportunity'
-  }
-
-  return label
+  return replacements[label] ?? label
 }
 
 function wait(ms: number) {
@@ -986,6 +987,123 @@ function Home() {
           color: #a55454;
         }
 
+        .method-card.policy-compact {
+          padding: 24px;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          justify-content: flex-start;
+          background: #f8f7f2;
+          border: 1px solid rgba(45, 58, 50, 0.12);
+          box-shadow: none;
+        }
+
+        .policy-title-row {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 16px;
+        }
+
+        .policy-title-row .kicker {
+          margin-bottom: 6px;
+        }
+
+        .policy-title-row h3 {
+          margin: 0;
+          font-size: 20px;
+          line-height: 1.15;
+        }
+
+        .policy-title-row > svg {
+          color: #216749;
+          flex: 0 0 auto;
+          margin-top: 2px;
+        }
+
+        .policy-split {
+          display: grid;
+          grid-template-columns: 3fr 2fr;
+          gap: 10px;
+        }
+
+        .policy-split > div {
+          padding: 14px;
+          border-radius: 13px;
+          background: #ffffff;
+          border: 1px solid rgba(45, 58, 50, 0.09);
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .policy-split > div:first-child {
+          border-top: 3px solid #6f8fb3;
+        }
+
+        .policy-split > div:last-child {
+          border-top: 3px solid #d98c7c;
+        }
+
+        .policy-split strong {
+          font-size: 24px;
+          line-height: 1;
+          letter-spacing: -0.03em;
+        }
+
+        .policy-split span {
+          color: #6e7972;
+          font-size: 11px;
+        }
+
+        .policy-rules {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 7px;
+        }
+
+        .policy-rules span {
+          padding: 6px 8px;
+          border-radius: 999px;
+          background: rgba(33, 103, 73, 0.07);
+          color: #50685b;
+          font-size: 10px;
+          font-weight: 600;
+        }
+
+        .target-fit-proof {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) minmax(0, 1fr);
+          gap: 10px;
+          align-items: center;
+          margin-bottom: 12px;
+          padding: 12px;
+          border-radius: 12px;
+          background: rgba(216, 178, 92, 0.08);
+          border: 1px solid rgba(216, 178, 92, 0.18);
+        }
+
+        .target-fit-proof > div {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+
+        .target-fit-proof span {
+          color: #78837c;
+          font-size: 9px;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+        }
+
+        .target-fit-proof strong {
+          font-size: 13px;
+        }
+
+        .target-fit-proof > svg {
+          color: #8a938d;
+        }
+
         @media (max-width: 900px) {
           .tactical-grid {
             grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -993,6 +1111,14 @@ function Home() {
 
           .price-proof {
             grid-template-columns: 1fr;
+          }
+
+          .target-fit-proof {
+            grid-template-columns: 1fr;
+          }
+
+          .target-fit-proof > svg {
+            transform: rotate(90deg);
           }
         }
 
@@ -1274,22 +1400,32 @@ function Home() {
             </p>
           </div>
 
-          <aside className="method-card">
-            <p className="kicker">Decision policy</p>
+          <aside className="method-card policy-compact">
+            <div className="policy-title-row">
+              <div>
+                <p className="kicker">Decision policy</p>
+                <h3>Best eligible trade wins.</h3>
+              </div>
 
-            <h3>60% portfolio fit · 40% opportunity</h3>
+              <ShieldCheck size={19} />
+            </div>
 
-            <p>
-              Highest eligible score wins.
-            </p>
+            <div className="policy-split">
+              <div>
+                <strong>60%</strong>
+                <span>Target fit</span>
+              </div>
 
-            <div className="guardrail">
-              <ShieldCheck size={18} />
+              <div>
+                <strong>40%</strong>
+                <span>Market opportunity</span>
+              </div>
+            </div>
 
-              <span>
-                <strong>Guardrails</strong>
-                Target +7.5pp · brokerage ≤2% · thesis intact
-              </span>
+            <div className="policy-rules">
+              <span>+7.5pp max</span>
+              <span>Brokerage ≤2%</span>
+              <span>Thesis intact</span>
             </div>
           </aside>
         </section>
@@ -1424,19 +1560,19 @@ function Results({
         />
 
         <Metric
-          label="Strategic score"
+          label="Target fit"
           value={`${recommendation.strategicScore.toFixed(
             1,
           )}/100`}
         />
 
         <Metric
-          label="Tactical score"
+          label="Market opportunity"
           value={`${recommendation.tacticalScore.toFixed(
             1,
-          )}/100 · ${
-            recommendation.tacticalLabel ?? ''
-          }`}
+          )}/100 · ${friendlyTacticalLabel(
+            recommendation.tacticalLabel,
+          )}`}
         />
       </div>
 
@@ -1562,8 +1698,8 @@ function Results({
                 <th>1M*</th>
                 <th>3M*</th>
                 <th>52W DD*</th>
-                <th>Strategic /100</th>
-                <th>Tactical /100</th>
+                <th>Target fit /100</th>
+                <th>Opportunity /100</th>
                 <th>Overall /100</th>
                 <th>Status</th>
               </tr>
@@ -1645,7 +1781,7 @@ function Results({
                         <strong>
                           {item.strategicScore.toFixed(1)}
                         </strong>
-                        <small>portfolio fit</small>
+                        <small>after-trade target</small>
                       </div>
                     </td>
 
@@ -1702,6 +1838,8 @@ function Results({
             <ScoreAudit
               key={item.ticker}
               item={item}
+              target={analysis.targets[item.ticker]}
+              analysisGeneratedAt={analysis.generatedAt}
             />
           ))}
         </div>
@@ -1830,8 +1968,12 @@ function AllocationCard({
 
 function ScoreAudit({
   item,
+  target,
+  analysisGeneratedAt,
 }: {
   item: Comparison
+  target: number
+  analysisGeneratedAt: string
 }) {
   const components = item.tacticalComponents
 
@@ -1842,10 +1984,6 @@ function ScoreAudit({
 
   const snapshotAsOf =
     item.market.snapshotAsOf
-
-  const currentAsOf =
-    item.market.currentPriceAsOf ??
-    item.market.asOf
 
   const priceMove =
     item.market.priceAdjustmentPct ??
@@ -1897,7 +2035,25 @@ function ScoreAudit({
   return (
     <details>
       <summary>
-        <strong>{item.ticker}</strong>
+        <strong
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '9px',
+          }}
+        >
+          <i
+            aria-hidden="true"
+            style={{
+              width: '10px',
+              height: '10px',
+              borderRadius: '999px',
+              backgroundColor: tickerColors[item.ticker],
+              flex: '0 0 auto',
+            }}
+          />
+          {item.ticker}
+        </strong>
 
         <span
           style={{
@@ -1908,7 +2064,12 @@ function ScoreAudit({
           Show calculation
         </span>
 
-        <ChevronDown size={16} />
+        <ChevronDown
+          size={16}
+          style={{
+            color: tickerColors[item.ticker],
+          }}
+        />
       </summary>
 
       <div className="score-audit-body">
@@ -1922,19 +2083,52 @@ function ScoreAudit({
           }}
         >
           <strong>
-            Strategic {item.strategicScore.toFixed(1)}/100
+            Target fit {item.strategicScore.toFixed(1)}/100
           </strong>
           <strong>
-            Tactical {item.tacticalScore.toFixed(1)}/100
+            Opportunity {item.tacticalScore.toFixed(1)}/100
           </strong>
           <strong>
             Overall {item.overallScore.toFixed(1)}/100
           </strong>
         </div>
 
+        {item.afterAllocation && (
+          <div
+            className="target-fit-proof"
+            style={{
+              borderLeft: `4px solid ${tickerColors[item.ticker]}`,
+            }}
+          >
+            <div>
+              <span>Post-trade {item.ticker}</span>
+              <strong>
+                {percent(item.afterAllocation[item.ticker])}
+              </strong>
+            </div>
+
+            <ArrowRight
+              size={15}
+              style={{
+                color: tickerColors[item.ticker],
+              }}
+            />
+
+            <div>
+              <span>Target</span>
+              <strong>{percent(target)}</strong>
+            </div>
+
+            <div>
+              <span>Target fit</span>
+              <strong>{item.strategicScore.toFixed(1)}/100</strong>
+            </div>
+          </div>
+        )}
+
         <div className="price-proof">
           <div>
-            <span>Daily snapshot price</span>
+            <span>Daily research snapshot price</span>
             <strong>{money.format(snapshotPrice)}</strong>
             {snapshotAsOf && (
               <small>
@@ -1945,36 +2139,41 @@ function ScoreAudit({
           </div>
 
           <div>
-            <span>Current analysis price</span>
+            <span>Latest price used</span>
             <strong>{money.format(item.price)}</strong>
-            {currentAsOf && (
-              <small>
-                {' '}
-                · {formatSydneyTimestamp(currentAsOf)}
-              </small>
-            )}
+            <small>
+              {' '}
+              · fetched {formatSydneyTimestamp(analysisGeneratedAt)}
+            </small>
           </div>
 
           <div>
-            <span>Move since snapshot</span>
+            <span>Price move since snapshot</span>
             <strong>{signed(priceMove)}</strong>
           </div>
         </div>
 
         <p className="live-proof">
-          Current price is used to recalculate the 1W, 1M, 3M and
-          52-week drawdown inputs before the tactical score is built.
+          Target fit compares this ETF&apos;s proposed post-trade weight with
+          its own target. The latest price is fetched when you press Analyse
+          and is used to recalculate the 1W, 1M, 3M and 52-week drawdown
+          inputs before the opportunity score is built.
         </p>
 
         {componentCards.length > 0 && (
           <div className="tactical-grid">
             {componentCards.map((component) => (
-              <div key={component.label}>
+              <div
+                key={component.label}
+                style={{
+                  borderTop: `3px solid ${tickerColors[item.ticker]}`,
+                }}
+              >
                 <span>{component.label}</span>
                 <strong>{component.raw}</strong>
                 <small>
                   {component.score.toFixed(1)}/100 ·{' '}
-                  {(component.weight * 100).toFixed(0)}% of tactical
+                  {(component.weight * 100).toFixed(0)}% of opportunity
                 </small>
               </div>
             ))}
