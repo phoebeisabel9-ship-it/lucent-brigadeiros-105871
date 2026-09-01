@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight,
   BarChart3,
@@ -80,12 +80,54 @@ type Recommendation = Comparison & {
   }>
 }
 
+type DataStatus = {
+  researchGeneratedAt: string
+  researchAgeHours: number
+  researchFresh: boolean
+  marketMetricsAvailable: boolean
+  researchAvailable: boolean
+  tacticalInputsAvailable: boolean
+  currentPricesAvailable: boolean
+}
+
 type Analysis = {
   generatedAt: string
   targets: Allocation
   recommendation: Recommendation
   comparisons: Comparison[]
+  dataStatus?: DataStatus
 }
+
+type RefreshStatus = {
+  status?: 'not-started' | 'running' | 'failed' | 'success'
+  step?: string
+  startedAt?: string
+  completedAt?: string
+  failedAt?: string
+  snapshotGeneratedAt?: string
+  error?: string | null
+  updatedAt?: string
+}
+
+type SnapshotStatus = {
+  available: boolean
+  message?: string
+  error?: string
+  generatedAt?: string
+  ageHours?: number
+  marketTickers?: string[]
+  researchTickers?: string[]
+  marketComplete?: boolean
+  researchComplete?: boolean
+  refreshStatus?: RefreshStatus | null
+}
+
+type DailyResearchState =
+  | 'checking'
+  | 'refreshing'
+  | 'ready'
+  | 'stale'
+  | 'failed'
 
 type Trade = {
   id: string
@@ -133,6 +175,44 @@ const percent = (value: number, digits = 1) =>
 
 const signed = (value: number) =>
   `${value > 0 ? '+' : ''}${value.toFixed(2)}%`
+
+function sydneyDateKey(value: string | Date = new Date()) {
+  const date = value instanceof Date ? value : new Date(value)
+
+  const parts = new Intl.DateTimeFormat('en-AU', {
+    timeZone: 'Australia/Sydney',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date)
+
+  const year = parts.find((part) => part.type === 'year')?.value
+  const month = parts.find((part) => part.type === 'month')?.value
+  const day = parts.find((part) => part.type === 'day')?.value
+
+  return `${year}-${month}-${day}`
+}
+
+function isSydneyToday(timestamp?: string) {
+  if (!timestamp) return false
+  return sydneyDateKey(timestamp) === sydneyDateKey()
+}
+
+function formatSydneyTimestamp(timestamp?: string) {
+  if (!timestamp) return 'unknown time'
+
+  return new Intl.DateTimeFormat('en-AU', {
+    timeZone: 'Australia/Sydney',
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(timestamp))
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response
@@ -202,6 +282,13 @@ function Home() {
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
+  const [snapshotStatus, setSnapshotStatus] =
+    useState<SnapshotStatus | null>(null)
+  const [dailyResearchState, setDailyResearchState] =
+    useState<DailyResearchState>('checking')
+  const [dailyResearchMessage, setDailyResearchMessage] =
+    useState("Checking today's market research…")
+  const refreshCheckStarted = useRef(false)
 
   /*
    * Load your previously saved balances and trade history
@@ -242,6 +329,163 @@ function Home() {
     }
   }, [balances])
 
+  async function readSnapshotStatus() {
+    const status = await api<SnapshotStatus>('/api/snapshot-status')
+    setSnapshotStatus(status)
+    return status
+  }
+
+  async function pollForTodaySnapshot() {
+    for (let attempt = 0; attempt < 72; attempt += 1) {
+      await wait(5_000)
+
+      const status = await readSnapshotStatus()
+
+      if (
+        status.available &&
+        status.generatedAt &&
+        isSydneyToday(status.generatedAt)
+      ) {
+        setDailyResearchState('ready')
+        setDailyResearchMessage(
+          `Today's tactical research is ready · updated ${formatSydneyTimestamp(
+            status.generatedAt,
+          )}.`,
+        )
+        return
+      }
+
+      if (status.refreshStatus?.status === 'failed') {
+        if (status.available && status.generatedAt) {
+          setDailyResearchState('stale')
+          setDailyResearchMessage(
+            `Today's refresh failed, so the model will use the last successful research from ${formatSydneyTimestamp(
+              status.generatedAt,
+            )}.`,
+          )
+        } else {
+          setDailyResearchState('failed')
+          setDailyResearchMessage(
+            status.refreshStatus.error
+              ? `Today's research refresh failed: ${status.refreshStatus.error}`
+              : "Today's research refresh failed.",
+          )
+        }
+        return
+      }
+    }
+
+    const status = await readSnapshotStatus().catch(() => null)
+
+    if (status?.available && status.generatedAt) {
+      setDailyResearchState('stale')
+      setDailyResearchMessage(
+        `Today's refresh is taking longer than expected. The model can still use the last successful research from ${formatSydneyTimestamp(
+          status.generatedAt,
+        )}.`,
+      )
+    } else {
+      setDailyResearchState('failed')
+      setDailyResearchMessage(
+        "Today's research refresh is taking longer than expected. Please reload the page to try again.",
+      )
+    }
+  }
+
+  async function triggerDailyRefresh() {
+    setDailyResearchState('refreshing')
+    setDailyResearchMessage(
+      "Refreshing today's market metrics, valuation and 7-day news research…",
+    )
+
+    try {
+      const response = await fetch(
+        '/.netlify/functions/refresh-research',
+        {
+          method: 'GET',
+        },
+      )
+
+      if (response.status !== 202 && !response.ok) {
+        const text = await response.text().catch(() => '')
+        throw new Error(
+          `Could not start today's research refresh: HTTP ${response.status} ${
+            text || response.statusText
+          }`,
+        )
+      }
+
+      await pollForTodaySnapshot()
+    } catch (refreshError) {
+      const status = await readSnapshotStatus().catch(() => null)
+
+      if (status?.available && status.generatedAt) {
+        setDailyResearchState('stale')
+        setDailyResearchMessage(
+          `Today's refresh could not be started. The model will use the last successful research from ${formatSydneyTimestamp(
+            status.generatedAt,
+          )}.`,
+        )
+      } else {
+        setDailyResearchState('failed')
+        setDailyResearchMessage(
+          refreshError instanceof Error
+            ? refreshError.message
+            : "Today's research refresh could not be started.",
+        )
+      }
+    }
+  }
+
+  async function ensureTodayResearch() {
+    setDailyResearchState('checking')
+    setDailyResearchMessage("Checking today's market research…")
+
+    try {
+      const status = await readSnapshotStatus()
+
+      if (
+        status.available &&
+        status.generatedAt &&
+        isSydneyToday(status.generatedAt) &&
+        status.marketComplete &&
+        status.researchComplete
+      ) {
+        setDailyResearchState('ready')
+        setDailyResearchMessage(
+          `Today's tactical research is ready · updated ${formatSydneyTimestamp(
+            status.generatedAt,
+          )}.`,
+        )
+        return
+      }
+
+      if (status.refreshStatus?.status === 'running') {
+        setDailyResearchState('refreshing')
+        setDailyResearchMessage(
+          "Today's research refresh is already running…",
+        )
+        await pollForTodaySnapshot()
+        return
+      }
+
+      await triggerDailyRefresh()
+    } catch (statusError) {
+      setDailyResearchState('failed')
+      setDailyResearchMessage(
+        statusError instanceof Error
+          ? statusError.message
+          : 'Could not check daily research status.',
+      )
+    }
+  }
+
+  useEffect(() => {
+    if (refreshCheckStarted.current) return
+    refreshCheckStarted.current = true
+    void ensureTodayResearch()
+  }, [])
+
   const totalPortfolio = useMemo(
     () =>
       TICKERS.reduce(
@@ -268,7 +512,15 @@ function Home() {
       })
 
       setAnalysis(result)
-      setNotice('Live market analysis completed.')
+      setNotice(
+        `Analysis completed using current prices and ${
+          result.dataStatus?.researchGeneratedAt
+            ? `research updated ${formatSydneyTimestamp(
+                result.dataStatus.researchGeneratedAt,
+              )}`
+            : 'the latest successful daily research'
+        }.`,
+      )
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -506,10 +758,34 @@ function Home() {
               </label>
             </div>
 
+            <div
+              className={`message ${
+                dailyResearchState === 'failed'
+                  ? 'error-message'
+                  : 'success-message'
+              }`}
+            >
+              {dailyResearchState === 'checking' ||
+              dailyResearchState === 'refreshing' ? (
+                <LoaderCircle className="spin" size={16} />
+              ) : dailyResearchState === 'ready' ? (
+                <Check size={16} />
+              ) : (
+                <RefreshCw size={16} />
+              )}
+              {dailyResearchMessage}
+            </div>
+
             <button
               className="analyse-button"
               onClick={() => void analyse()}
-              disabled={loading}
+              disabled={
+                loading ||
+                dailyResearchState === 'checking' ||
+                dailyResearchState === 'refreshing' ||
+                (dailyResearchState === 'failed' &&
+                  !snapshotStatus?.available)
+              }
             >
               {loading ? (
                 <>
@@ -517,7 +793,16 @@ function Home() {
                     className="spin"
                     size={19}
                   />
-                  Researching markets
+                  Calculating recommendation
+                </>
+              ) : dailyResearchState === 'checking' ||
+                dailyResearchState === 'refreshing' ? (
+                <>
+                  <LoaderCircle
+                    className="spin"
+                    size={19}
+                  />
+                  Preparing daily research
                 </>
               ) : (
                 <>
@@ -529,7 +814,9 @@ function Home() {
 
             <p className="secure-note">
               <LockKeyhole size={13} />
-              Balances are stored only in this browser.
+              Balances are stored only in this browser. Daily tactical
+              research is refreshed once when you use the app; current ETF
+              prices refresh when you analyse.
             </p>
           </div>
 
@@ -615,6 +902,16 @@ function Results({
 
   return (
     <section className="results-section">
+      {analysis.dataStatus && (
+        <div className="message success-message">
+          <Check size={16} />
+          Tactical inputs complete · daily market metrics and research updated{' '}
+          {formatSydneyTimestamp(
+            analysis.dataStatus.researchGeneratedAt,
+          )} · current ETF prices refreshed for this analysis.
+        </div>
+      )}
+
       <div className="result-hero">
         <div className="buy-copy">
           <p className="eyebrow">
@@ -737,7 +1034,7 @@ function Results({
           <div className="panel-heading">
             <div>
               <p className="kicker">
-                Current research
+                Daily tactical research
               </p>
 
               <h3>
@@ -746,7 +1043,7 @@ function Results({
             </div>
 
             <span className="live-badge">
-              Live
+              Daily
             </span>
           </div>
 
@@ -1162,7 +1459,7 @@ function AnalysisSkeleton() {
         />
 
         <span>
-          Retrieving ASX history
+          Refreshing current ETF prices
         </span>
       </div>
 
@@ -1170,7 +1467,7 @@ function AnalysisSkeleton() {
         <TrendingDown size={20} />
 
         <span>
-          Scoring market dips
+          Loading daily tactical inputs
         </span>
       </div>
 
@@ -1178,7 +1475,7 @@ function AnalysisSkeleton() {
         <Sparkles size={20} />
 
         <span>
-          Researching the last 7 days
+          Scoring one-trade candidates
         </span>
       </div>
 
