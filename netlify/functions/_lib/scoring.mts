@@ -10,6 +10,7 @@ import {
 const STRATEGIC_WEIGHT = 0.6
 const TACTICAL_WEIGHT = 0.4
 const HARD_OVERWEIGHT_BUFFER = 0.075
+const MAX_BROKERAGE_DRAG = 0.02
 
 const TACTICAL_WEIGHTS = {
   week: 0.3,
@@ -419,16 +420,59 @@ export function analyseTrades(
             balances.brokerage,
         )
 
-      const units =
+      const maxAffordableUnits =
         Math.floor(
           investableCash /
             currentPrice,
         )
 
+      const hardOverweightCap =
+        TARGETS[ticker] +
+        HARD_OVERWEIGHT_BUFFER
+
+      /*
+       * Start with the maximum affordable whole-unit trade.
+       * If that would breach the hard portfolio cap, step the
+       * unit count down until the largest permitted trade is found.
+       */
+      let units =
+        maxAffordableUnits
+
+      while (units > 0) {
+        const testAmount =
+          units * currentPrice
+
+        const testValues = {
+          ...beforeValues,
+          [ticker]:
+            beforeValues[ticker] +
+            testAmount,
+        }
+
+        const testAllocation =
+          allocation(testValues)
+
+        if (
+          testAllocation[ticker] <=
+          hardOverweightCap +
+            Number.EPSILON
+        ) {
+          break
+        }
+
+        units -= 1
+      }
+
       const amountInvested =
         round(
           units * currentPrice,
         )
+
+      const brokerageDrag =
+        amountInvested > 0
+          ? balances.brokerage /
+            amountInvested
+          : Number.POSITIVE_INFINITY
 
       const cashUsed =
         round(
@@ -473,34 +517,42 @@ export function analyseTrades(
       const improvement =
         beforeError - afterError
 
-      const hardOverweightCap =
-        TARGETS[ticker] +
-        HARD_OVERWEIGHT_BUFFER
-
       const disqualificationReasons:
         string[] = []
 
-      if (units < 1) {
+      if (
+        maxAffordableUnits < 1
+      ) {
         disqualificationReasons.push(
           'Insufficient cash for one whole unit after brokerage.',
+        )
+      } else if (units < 1) {
+        disqualificationReasons.push(
+          `No additional whole unit can be purchased without exceeding the ${round(
+            hardOverweightCap * 100,
+            1,
+          )}% hard cap for ${ticker}.`,
         )
       }
 
       if (
         units > 0 &&
-        afterAllocation[ticker] >
-          hardOverweightCap +
-            Number.EPSILON
+        brokerageDrag >
+          MAX_BROKERAGE_DRAG
       ) {
         disqualificationReasons.push(
-          `Post-trade allocation would be ${round(
-            afterAllocation[ticker] *
+          `The largest guardrail-compliant trade is only ${units} whole unit${units === 1 ? '' : 's'} ($${amountInvested.toFixed(
+            2,
+          )}), making $${balances.brokerage.toFixed(
+            2,
+          )} brokerage ${round(
+            brokerageDrag * 100,
+            2,
+          )}% of the investment — above the ${round(
+            MAX_BROKERAGE_DRAG *
               100,
-            1,
-          )}%, above the ${round(
-            hardOverweightCap * 100,
-            1,
-          )}% hard cap for ${ticker}.`,
+            0,
+          )}% efficiency limit.`,
         )
       }
 
@@ -584,6 +636,8 @@ export function analyseTrades(
 
         units,
 
+        maxAffordableUnits,
+
         price: round(
           currentPrice,
           4,
@@ -595,6 +649,24 @@ export function analyseTrades(
         ),
 
         amountInvested,
+
+        brokerageDrag:
+          Number.isFinite(
+            brokerageDrag,
+          )
+            ? round(
+                brokerageDrag *
+                  100,
+                3,
+              )
+            : null,
+
+        maxBrokerageDragPct:
+          round(
+            MAX_BROKERAGE_DRAG *
+              100,
+            2,
+          ),
 
         brokerage:
           units > 0
@@ -670,7 +742,7 @@ export function analyseTrades(
 
   if (!eligible.length) {
     throw new Error(
-      'No ETF is eligible under the affordability, thesis and hard-overweight guardrails.',
+      'No ETF is eligible under the affordability, brokerage-efficiency, thesis and hard-overweight guardrails.',
     )
   }
 
@@ -717,8 +789,17 @@ export function analyseTrades(
         units:
           item.units,
 
+        maxAffordableUnits:
+          item.maxAffordableUnits,
+
         price:
           item.price,
+
+        brokerageDrag:
+          item.brokerageDrag,
+
+        maxBrokerageDragPct:
+          item.maxBrokerageDragPct,
 
         snapshotPrice:
           item.snapshotPrice,
@@ -788,6 +869,12 @@ export function analyseTrades(
 
       hardOverweightBuffer:
         HARD_OVERWEIGHT_BUFFER,
+
+      maxBrokerageDrag:
+        MAX_BROKERAGE_DRAG,
+
+      tradeSizing:
+        'For each ETF, use the largest whole-unit trade that fits both available cash and the hard overweight cap; then require brokerage to be no more than 2% of the amount invested.',
 
       strategicScale:
         'Absolute 0-100. 100 means the post-trade portfolio exactly matches target allocation.',
