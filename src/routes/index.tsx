@@ -49,18 +49,52 @@ type Market = {
   high52Week: number
   drawdown52Week: number
   asOf: string
+  snapshotPrice?: number
+  snapshotAsOf?: string
+  currentPriceAsOf?: string
+  priceAdjustmentPct?: number
+  returnsAdjustedUsingCurrentPrice?: boolean
+}
+
+type TacticalComponent = {
+  rawValue: number
+  score: number
+  weight: number
+}
+
+type TacticalComponents = {
+  week: TacticalComponent
+  month: TacticalComponent
+  quarter: TacticalComponent
+  drawdown52Week: TacticalComponent
+  valuation: TacticalComponent
+  news: TacticalComponent
 }
 
 type Comparison = {
   ticker: Ticker
   eligible: boolean
   units: number
+  maxAffordableUnits?: number
   price: number
+  snapshotPrice?: number
+  brokerageDrag?: number | null
+  maxBrokerageDragPct?: number
   alignmentImprovement: number
+  beforeStrategicScore?: number
   strategicScore: number
   tacticalScore: number
+  tacticalLabel?: string
   overallScore: number
+  overallLabel?: string
+  scoreWeights?: {
+    strategic: number
+    tactical: number
+  }
+  tacticalComponents?: TacticalComponents
+  hardOverweightCap?: number
   disqualificationReason: string | null
+  disqualificationReasons?: string[]
   whyItLost: string
   market: Market
   research: Research
@@ -88,6 +122,7 @@ type DataStatus = {
   researchAvailable: boolean
   tacticalInputsAvailable: boolean
   currentPricesAvailable: boolean
+  currentPriceFeedsTacticalScore?: boolean
 }
 
 type Analysis = {
@@ -96,6 +131,16 @@ type Analysis = {
   recommendation: Recommendation
   comparisons: Comparison[]
   dataStatus?: DataStatus
+  scoringModel?: {
+    strategicWeight: number
+    tacticalWeight: number
+    hardOverweightBuffer: number
+    maxBrokerageDrag?: number
+    tradeSizing?: string
+    strategicScale?: string
+    tacticalScale?: string
+    currentPriceAdjustment?: string
+  }
 }
 
 type RefreshStatus = {
@@ -608,10 +653,53 @@ function Home() {
           grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 22px;
           margin-top: 22px;
+          align-items: stretch;
         }
 
         .allocation-pair-grid .allocation-card {
           min-height: 0;
+          position: relative;
+          overflow: hidden;
+        }
+
+        .allocation-card.after-card {
+          border: 2px solid rgba(33, 103, 73, 0.34);
+          background:
+            linear-gradient(
+              135deg,
+              rgba(232, 242, 226, 0.74),
+              rgba(255, 255, 255, 0.92) 52%
+            );
+        }
+
+        .allocation-card.after-card::before {
+          content: '';
+          position: absolute;
+          inset: 0 auto 0 0;
+          width: 5px;
+          background: #216749;
+        }
+
+        .allocation-card .allocation-card-subtitle {
+          margin: 4px 0 18px;
+          color: #748178;
+          font-size: 12px;
+          line-height: 1.4;
+        }
+
+        .allocation-card .after-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 9px;
+          border-radius: 999px;
+          background: rgba(33, 103, 73, 0.09);
+          color: #216749;
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          margin-bottom: 10px;
         }
 
         .research-full-card {
@@ -647,13 +735,306 @@ function Home() {
           transition: width 220ms ease;
         }
 
+        .contribution-settings {
+          margin-top: 22px;
+          padding: 18px 20px;
+          border-radius: 18px;
+          border: 1px solid rgba(111, 143, 179, 0.26);
+          background:
+            linear-gradient(
+              135deg,
+              rgba(111, 143, 179, 0.10),
+              rgba(216, 178, 92, 0.08)
+            );
+        }
+
+        .contribution-settings-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          margin-bottom: 14px;
+        }
+
+        .contribution-settings-title {
+          display: flex;
+          align-items: center;
+          gap: 9px;
+        }
+
+        .contribution-settings-title strong {
+          font-size: 14px;
+        }
+
+        .contribution-settings-head > span {
+          color: #748178;
+          font-size: 11px;
+        }
+
+        .contribution-values {
+          display: grid;
+          grid-template-columns: minmax(0, 1.45fr) minmax(0, 0.75fr);
+          gap: 12px;
+        }
+
+        .contribution-value {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          padding: 13px 15px;
+          border-radius: 13px;
+          background: rgba(255, 255, 255, 0.78);
+          border: 1px solid rgba(78, 92, 83, 0.10);
+        }
+
+        .contribution-value > span {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .contribution-value > span strong {
+          font-size: 13px;
+        }
+
+        .contribution-value > span small {
+          color: #7b857f;
+          font-size: 10px;
+        }
+
+        .contribution-input {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          min-width: 105px;
+          justify-content: flex-end;
+        }
+
+        .contribution-input i {
+          font-style: normal;
+          color: #7c8780;
+          font-size: 12px;
+        }
+
+        .contribution-input input {
+          width: 92px;
+          border: 0;
+          background: transparent;
+          text-align: right;
+          font: inherit;
+          font-size: 16px;
+          font-weight: 700;
+          outline: none;
+          color: inherit;
+        }
+
+        .contribution-value.primary {
+          background: rgba(255, 255, 255, 0.94);
+          border-color: rgba(111, 143, 179, 0.22);
+        }
+
+        .score-explainer {
+          margin-top: 22px;
+          padding: 18px 20px;
+          border-radius: 16px;
+          border: 1px solid rgba(78, 92, 83, 0.12);
+          background: rgba(247, 246, 240, 0.82);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 18px;
+        }
+
+        .score-explainer strong {
+          display: block;
+          margin-bottom: 4px;
+          font-size: 13px;
+        }
+
+        .score-explainer p {
+          margin: 0;
+          color: #6f7b74;
+          font-size: 12px;
+          line-height: 1.5;
+        }
+
+        .score-explainer .score-formula {
+          flex: 0 0 auto;
+          font-weight: 800;
+          font-size: 13px;
+          white-space: nowrap;
+        }
+
+        .score-cell {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .score-cell strong {
+          white-space: nowrap;
+        }
+
+        .score-cell small {
+          color: #7c8780;
+          font-size: 9px;
+          white-space: nowrap;
+        }
+
+        .table-note {
+          margin: 12px 0 0;
+          color: #748178;
+          font-size: 11px;
+          line-height: 1.5;
+        }
+
+        .score-audit {
+          margin-top: 22px;
+        }
+
+        .score-audit details {
+          border-top: 1px solid rgba(78, 92, 83, 0.12);
+        }
+
+        .score-audit details:last-child {
+          border-bottom: 1px solid rgba(78, 92, 83, 0.12);
+        }
+
+        .score-audit summary {
+          list-style: none;
+          cursor: pointer;
+          padding: 16px 0;
+          display: grid;
+          grid-template-columns: 80px 1fr auto;
+          align-items: center;
+          gap: 16px;
+        }
+
+        .score-audit summary::-webkit-details-marker {
+          display: none;
+        }
+
+        .score-audit-summary-score {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          color: #69756e;
+          font-size: 12px;
+        }
+
+        .score-audit-body {
+          padding: 0 0 20px;
+        }
+
+        .price-proof {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+          margin-bottom: 14px;
+        }
+
+        .price-proof > div {
+          padding: 12px;
+          border-radius: 12px;
+          background: rgba(111, 143, 179, 0.08);
+        }
+
+        .price-proof span,
+        .tactical-grid span {
+          display: block;
+          color: #78837c;
+          font-size: 9px;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          margin-bottom: 4px;
+        }
+
+        .price-proof strong {
+          font-size: 13px;
+        }
+
+        .live-proof {
+          margin: 0 0 15px;
+          color: #587064;
+          font-size: 11px;
+          line-height: 1.5;
+        }
+
+        .tactical-grid {
+          display: grid;
+          grid-template-columns: repeat(6, minmax(0, 1fr));
+          gap: 10px;
+        }
+
+        .tactical-grid > div {
+          padding: 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(78, 92, 83, 0.10);
+          background: rgba(255, 255, 255, 0.72);
+        }
+
+        .tactical-grid strong {
+          display: block;
+          font-size: 13px;
+          margin-bottom: 3px;
+        }
+
+        .tactical-grid small {
+          color: #768179;
+          font-size: 10px;
+          line-height: 1.35;
+        }
+
+        .guardrail-note {
+          margin-top: 12px;
+          padding: 10px 12px;
+          border-radius: 10px;
+          font-size: 11px;
+          line-height: 1.5;
+        }
+
+        .guardrail-note.ok {
+          background: rgba(85, 136, 102, 0.09);
+          color: #4f735a;
+        }
+
+        .guardrail-note.blocked {
+          background: rgba(195, 95, 95, 0.09);
+          color: #a55454;
+        }
+
+        @media (max-width: 900px) {
+          .tactical-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+
+          .price-proof {
+            grid-template-columns: 1fr;
+          }
+        }
+
         @media (max-width: 760px) {
-          .allocation-pair-grid {
+          .allocation-pair-grid,
+          .contribution-values {
             grid-template-columns: 1fr;
           }
 
           .research-full-card .research-line p {
             font-size: 14px;
+          }
+
+          .score-explainer {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+
+          .tactical-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .score-audit summary {
+            grid-template-columns: 58px 1fr auto;
           }
         }
       `}</style>
@@ -789,58 +1170,69 @@ function Home() {
               ))}
             </div>
 
-            <div className="cash-row">
-              <label className="money-field accent-field">
-                <span>
-                  <strong>Cash available</strong>
-                  <small>For this contribution</small>
-                </span>
-
-                <div>
-                  <i>$</i>
-
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={balances.cash}
-                    onChange={(event) =>
-                      setBalances({
-                        ...balances,
-                        cash: Number(
-                          event.target.value,
-                        ),
-                      })
-                    }
-                  />
+            <div className="contribution-settings">
+              <div className="contribution-settings-head">
+                <div className="contribution-settings-title">
+                  <WalletCards size={17} />
+                  <strong>Contribution settings</strong>
                 </div>
-              </label>
 
-              <label className="money-field">
-                <span>
-                  <strong>Brokerage</strong>
-                  <small>Charged once</small>
-                </span>
+                <span>Used for this purchase only</span>
+              </div>
 
-                <div>
-                  <i>$</i>
+              <div className="contribution-values">
+                <label className="contribution-value primary">
+                  <span>
+                    <strong>Cash available</strong>
+                    <small>Your maximum spend for this contribution</small>
+                  </span>
 
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={balances.brokerage}
-                    onChange={(event) =>
-                      setBalances({
-                        ...balances,
-                        brokerage: Number(
-                          event.target.value,
-                        ),
-                      })
-                    }
-                  />
-                </div>
-              </label>
+                  <div className="contribution-input">
+                    <i>$</i>
+
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={balances.cash}
+                      onChange={(event) =>
+                        setBalances({
+                          ...balances,
+                          cash: Number(
+                            event.target.value,
+                          ),
+                        })
+                      }
+                    />
+                  </div>
+                </label>
+
+                <label className="contribution-value">
+                  <span>
+                    <strong>Brokerage</strong>
+                    <small>Applied once to the chosen trade</small>
+                  </span>
+
+                  <div className="contribution-input">
+                    <i>$</i>
+
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={balances.brokerage}
+                      onChange={(event) =>
+                        setBalances({
+                          ...balances,
+                          brokerage: Number(
+                            event.target.value,
+                          ),
+                        })
+                      }
+                    />
+                  </div>
+                </label>
+              </div>
             </div>
 
             <div
@@ -1041,7 +1433,7 @@ function Results({
             <span>Overall</span>
           </div>
 
-          <small>80 / 20 weighted</small>
+          <small>60 / 40 weighted · /100</small>
         </div>
       </div>
 
@@ -1076,30 +1468,52 @@ function Results({
 
         <Metric
           label="Strategic score"
-          value={recommendation.strategicScore.toFixed(
+          value={`${recommendation.strategicScore.toFixed(
             1,
-          )}
+          )}/100`}
         />
 
         <Metric
           label="Tactical score"
-          value={recommendation.tacticalScore.toFixed(
+          value={`${recommendation.tacticalScore.toFixed(
             1,
-          )}
+          )}/100 · ${
+            recommendation.tacticalLabel ?? ''
+          }`}
         />
       </div>
 
       <div className="allocation-pair-grid">
         <AllocationCard
-          title="Allocation before"
+          title="Current allocation"
+          subtitle="Before this contribution"
           allocation={recommendation.beforeAllocation}
+          target={analysis.targets}
+          variant="before"
         />
 
         <AllocationCard
           title="Allocation after"
+          subtitle={`After buying ${recommendation.units} ${recommendation.ticker}`}
           allocation={recommendation.afterAllocation}
           target={analysis.targets}
+          variant="after"
         />
+      </div>
+
+      <div className="score-explainer">
+        <div>
+          <strong>Scores are absolute /100 — not relative rankings</strong>
+          <p>
+            Strategic: 100 means the post-trade portfolio exactly matches
+            target. Tactical: 50 is neutral and 100 is an exceptional
+            &quot;on sale&quot; setup.
+          </p>
+        </div>
+
+        <div className="score-formula">
+          60% strategic + 40% tactical
+        </div>
       </div>
 
       <div className="panel research-card research-full-card">
@@ -1172,12 +1586,28 @@ function Results({
             <h3>Trade comparison</h3>
           </div>
 
-          <span className="as-of">
-            As of{' '}
-            {new Date(
-              analysis.generatedAt,
-            ).toLocaleString('en-AU')}
-          </span>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              flexWrap: 'wrap',
+              justifyContent: 'flex-end',
+            }}
+          >
+            {analysis.dataStatus?.currentPriceFeedsTacticalScore && (
+              <span className="live-badge">
+                Current price applied
+              </span>
+            )}
+
+            <span className="as-of">
+              As of{' '}
+              {new Date(
+                analysis.generatedAt,
+              ).toLocaleString('en-AU')}
+            </span>
+          </div>
         </div>
 
         <div className="table-scroll">
@@ -1186,13 +1616,13 @@ function Results({
               <tr>
                 <th>ETF</th>
                 <th>Trade</th>
-                <th>1W</th>
-                <th>1M</th>
-                <th>3M</th>
-                <th>52W DD</th>
-                <th>Strategic</th>
-                <th>Tactical</th>
-                <th>Overall</th>
+                <th>1W*</th>
+                <th>1M*</th>
+                <th>3M*</th>
+                <th>52W DD*</th>
+                <th>Strategic /100</th>
+                <th>Tactical /100</th>
+                <th>Overall /100</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -1269,23 +1699,34 @@ function Results({
                     </td>
 
                     <td>
-                      {item.strategicScore.toFixed(
-                        1,
-                      )}
+                      <div className="score-cell">
+                        <strong>
+                          {item.strategicScore.toFixed(1)}
+                        </strong>
+                        <small>portfolio fit</small>
+                      </div>
                     </td>
 
                     <td>
-                      {item.tacticalScore.toFixed(
-                        1,
-                      )}
+                      <div className="score-cell">
+                        <strong>
+                          {item.tacticalScore.toFixed(1)}
+                        </strong>
+                        <small>
+                          {item.tacticalLabel ?? ''}
+                        </small>
+                      </div>
                     </td>
 
                     <td>
-                      <strong>
-                        {item.overallScore.toFixed(
-                          1,
-                        )}
-                      </strong>
+                      <div className="score-cell">
+                        <strong>
+                          {item.overallScore.toFixed(1)}
+                        </strong>
+                        <small>
+                          {item.overallLabel ?? ''}
+                        </small>
+                      </div>
                     </td>
 
                     <td>
@@ -1304,6 +1745,23 @@ function Results({
               )}
             </tbody>
           </table>
+        </div>
+
+        <p className="table-note">
+          * Live-adjusted using the current ETF price at analysis time and
+          today&apos;s cached historical reference data. 52W DD means the
+          percentage below the 52-week high — it is not the 12-month return.
+        </p>
+
+        <div className="score-audit">
+          <h4>How each score was calculated</h4>
+
+          {analysis.comparisons.map((item) => (
+            <ScoreAudit
+              key={item.ticker}
+              item={item}
+            />
+          ))}
         </div>
 
         <div className="why-list">
@@ -1343,20 +1801,41 @@ function Metric({
 
 function AllocationCard({
   title,
+  subtitle,
   allocation,
   target,
+  variant = 'before',
 }: {
   title: string
+  subtitle?: string
   allocation: Allocation
   target?: Allocation
+  variant?: 'before' | 'after'
 }) {
   return (
-    <div className="panel allocation-card">
+    <div
+      className={`panel allocation-card ${
+        variant === 'after' ? 'after-card' : 'before-card'
+      }`}
+    >
       <p className="kicker">
         Portfolio mix
       </p>
 
+      {variant === 'after' && (
+        <span className="after-pill">
+          <ArrowRight size={12} />
+          Proposed after trade
+        </span>
+      )}
+
       <h3>{title}</h3>
+
+      {subtitle && (
+        <p className="allocation-card-subtitle">
+          {subtitle}
+        </p>
+      )}
 
       {TICKERS.map((ticker) => (
         <div
@@ -1419,6 +1898,167 @@ function AllocationCard({
         </div>
       ))}
     </div>
+  )
+}
+
+function ScoreAudit({
+  item,
+}: {
+  item: Comparison
+}) {
+  const components = item.tacticalComponents
+
+  const snapshotPrice =
+    item.snapshotPrice ??
+    item.market.snapshotPrice ??
+    item.price
+
+  const snapshotAsOf =
+    item.market.snapshotAsOf
+
+  const currentAsOf =
+    item.market.currentPriceAsOf ??
+    item.market.asOf
+
+  const priceMove =
+    item.market.priceAdjustmentPct ??
+    (snapshotPrice
+      ? ((item.price - snapshotPrice) / snapshotPrice) * 100
+      : 0)
+
+  const componentCards = components
+    ? [
+        {
+          label: '1W',
+          raw: signed(components.week.rawValue),
+          score: components.week.score,
+          weight: components.week.weight,
+        },
+        {
+          label: '1M',
+          raw: signed(components.month.rawValue),
+          score: components.month.score,
+          weight: components.month.weight,
+        },
+        {
+          label: '3M',
+          raw: signed(components.quarter.rawValue),
+          score: components.quarter.score,
+          weight: components.quarter.weight,
+        },
+        {
+          label: '52W drawdown',
+          raw: `${components.drawdown52Week.rawValue.toFixed(2)}%`,
+          score: components.drawdown52Week.score,
+          weight: components.drawdown52Week.weight,
+        },
+        {
+          label: 'Valuation',
+          raw: `${components.valuation.rawValue > 0 ? '+' : ''}${components.valuation.rawValue}`,
+          score: components.valuation.score,
+          weight: components.valuation.weight,
+        },
+        {
+          label: 'News',
+          raw: `${components.news.rawValue > 0 ? '+' : ''}${components.news.rawValue}`,
+          score: components.news.score,
+          weight: components.news.weight,
+        },
+      ]
+    : []
+
+  return (
+    <details>
+      <summary>
+        <strong>{item.ticker}</strong>
+
+        <div className="score-audit-summary-score">
+          <span>
+            Strategic {item.strategicScore.toFixed(1)}/100
+          </span>
+
+          <span>
+            Tactical {item.tacticalScore.toFixed(1)}/100
+          </span>
+
+          <span>
+            Overall {item.overallScore.toFixed(1)}/100
+          </span>
+        </div>
+
+        <ChevronDown size={16} />
+      </summary>
+
+      <div className="score-audit-body">
+        <div className="price-proof">
+          <div>
+            <span>Daily snapshot price</span>
+            <strong>{money.format(snapshotPrice)}</strong>
+            {snapshotAsOf && (
+              <small>
+                {' '}
+                · {formatSydneyTimestamp(snapshotAsOf)}
+              </small>
+            )}
+          </div>
+
+          <div>
+            <span>Current analysis price</span>
+            <strong>{money.format(item.price)}</strong>
+            {currentAsOf && (
+              <small>
+                {' '}
+                · {formatSydneyTimestamp(currentAsOf)}
+              </small>
+            )}
+          </div>
+
+          <div>
+            <span>Move since snapshot</span>
+            <strong>{signed(priceMove)}</strong>
+          </div>
+        </div>
+
+        <p className="live-proof">
+          Current price is used to recalculate the 1W, 1M, 3M and
+          52-week drawdown inputs before the tactical score is built.
+        </p>
+
+        {componentCards.length > 0 && (
+          <div className="tactical-grid">
+            {componentCards.map((component) => (
+              <div key={component.label}>
+                <span>{component.label}</span>
+                <strong>{component.raw}</strong>
+                <small>
+                  {component.score.toFixed(1)}/100 ·{' '}
+                  {(component.weight * 100).toFixed(0)}% of tactical
+                </small>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div
+          className={`guardrail-note ${
+            item.eligible ? 'ok' : 'blocked'
+          }`}
+        >
+          {item.eligible
+            ? `Eligible · ${item.units} whole unit${
+                item.units === 1 ? '' : 's'
+              } selected. ${
+                item.brokerageDrag != null
+                  ? `Brokerage drag ${item.brokerageDrag.toFixed(2)}%.`
+                  : ''
+              }`
+            : `Disqualified · ${
+                item.disqualificationReason ??
+                'A portfolio guardrail was triggered.'
+              }`}
+        </div>
+      </div>
+    </details>
   )
 }
 
