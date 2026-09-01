@@ -290,6 +290,20 @@ function targetStatus(
   }
 }
 
+function friendlyTacticalLabel(label?: string) {
+  if (!label) return ''
+
+  if (label === 'Unattractive') {
+    return 'Limited opportunity'
+  }
+
+  if (label === 'Very unattractive') {
+    return 'Low opportunity'
+  }
+
+  return label
+}
+
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -834,38 +848,6 @@ function Home() {
           border-color: rgba(111, 143, 179, 0.22);
         }
 
-        .score-explainer {
-          margin-top: 22px;
-          padding: 18px 20px;
-          border-radius: 16px;
-          border: 1px solid rgba(78, 92, 83, 0.12);
-          background: rgba(247, 246, 240, 0.82);
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 18px;
-        }
-
-        .score-explainer strong {
-          display: block;
-          margin-bottom: 4px;
-          font-size: 13px;
-        }
-
-        .score-explainer p {
-          margin: 0;
-          color: #6f7b74;
-          font-size: 12px;
-          line-height: 1.5;
-        }
-
-        .score-explainer .score-formula {
-          flex: 0 0 auto;
-          font-weight: 800;
-          font-size: 13px;
-          white-space: nowrap;
-        }
-
         .score-cell {
           display: flex;
           flex-direction: column;
@@ -1022,11 +1004,6 @@ function Home() {
 
           .research-full-card .research-line p {
             font-size: 14px;
-          }
-
-          .score-explainer {
-            align-items: flex-start;
-            flex-direction: column;
           }
 
           .tactical-grid {
@@ -1300,38 +1277,18 @@ function Home() {
           <aside className="method-card">
             <p className="kicker">Decision policy</p>
 
-            <h3>Strategy stays in control.</h3>
-
-            <div className="weight-row">
-              <span>Strategic alignment</span>
-              <strong>80%</strong>
-            </div>
-
-            <div className="weight-track">
-              <span style={{ width: '80%' }} />
-            </div>
-
-            <div className="weight-row">
-              <span>Market opportunity</span>
-              <strong>20%</strong>
-            </div>
-
-            <div className="weight-track tactical">
-              <span style={{ width: '20%' }} />
-            </div>
+            <h3>60% portfolio fit · 40% opportunity</h3>
 
             <p>
-              A dip can improve an eligible ETF’s rank,
-              but cannot rescue a trade that moves the
-              portfolio further from target.
+              Highest eligible score wins.
             </p>
 
             <div className="guardrail">
               <ShieldCheck size={18} />
 
               <span>
-                <strong>Hard guardrail</strong>
-                Worse alignment means disqualified.
+                <strong>Guardrails</strong>
+                Target +7.5pp · brokerage ≤2% · thesis intact
               </span>
             </div>
           </aside>
@@ -1499,21 +1456,6 @@ function Results({
           target={analysis.targets}
           variant="after"
         />
-      </div>
-
-      <div className="score-explainer">
-        <div>
-          <strong>Scores are absolute /100 — not relative rankings</strong>
-          <p>
-            Strategic: 100 means the post-trade portfolio exactly matches
-            target. Tactical: 50 is neutral and 100 is an exceptional
-            &quot;on sale&quot; setup.
-          </p>
-        </div>
-
-        <div className="score-formula">
-          60% strategic + 40% tactical
-        </div>
       </div>
 
       <div className="panel research-card research-full-card">
@@ -1713,7 +1655,7 @@ function Results({
                           {item.tacticalScore.toFixed(1)}
                         </strong>
                         <small>
-                          {item.tacticalLabel ?? ''}
+                          {friendlyTacticalLabel(item.tacticalLabel)}
                         </small>
                       </div>
                     </td>
@@ -1764,21 +1706,6 @@ function Results({
           ))}
         </div>
 
-        <div className="why-list">
-          <h4>
-            Why {recommendation.ticker} beat
-            each alternative
-          </h4>
-
-          {recommendation.whyItBeatAlternatives.map(
-            (item) => (
-              <div key={item.ticker}>
-                <span>{item.ticker}</span>
-                <p>{item.reason}</p>
-              </div>
-            ),
-          )}
-        </div>
       </div>
     </section>
   )
@@ -1972,24 +1899,39 @@ function ScoreAudit({
       <summary>
         <strong>{item.ticker}</strong>
 
-        <div className="score-audit-summary-score">
-          <span>
-            Strategic {item.strategicScore.toFixed(1)}/100
-          </span>
-
-          <span>
-            Tactical {item.tacticalScore.toFixed(1)}/100
-          </span>
-
-          <span>
-            Overall {item.overallScore.toFixed(1)}/100
-          </span>
-        </div>
+        <span
+          style={{
+            color: '#748178',
+            fontSize: '12px',
+          }}
+        >
+          Show calculation
+        </span>
 
         <ChevronDown size={16} />
       </summary>
 
       <div className="score-audit-body">
+        <div
+          style={{
+            display: 'flex',
+            gap: '18px',
+            flexWrap: 'wrap',
+            marginBottom: '14px',
+            fontSize: '12px',
+          }}
+        >
+          <strong>
+            Strategic {item.strategicScore.toFixed(1)}/100
+          </strong>
+          <strong>
+            Tactical {item.tacticalScore.toFixed(1)}/100
+          </strong>
+          <strong>
+            Overall {item.overallScore.toFixed(1)}/100
+          </strong>
+        </div>
+
         <div className="price-proof">
           <div>
             <span>Daily snapshot price</span>
