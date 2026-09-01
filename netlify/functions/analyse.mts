@@ -4,6 +4,7 @@ import { getCurrentPrices } from './_lib/market.mjs'
 import {
   getDailySnapshot,
   getSnapshotAgeHours,
+  getTimestampAgeHours,
   isSnapshotFresh,
 } from './_lib/snapshot.mjs'
 import { analyseTrades } from './_lib/scoring.mjs'
@@ -102,7 +103,7 @@ export default async (
       return Response.json(
         {
           error:
-            'Today’s market research has not been prepared yet.',
+            'Today’s market data has not been prepared yet.',
           code:
             'SNAPSHOT_MISSING',
         },
@@ -121,6 +122,27 @@ export default async (
       isSnapshotFresh(
         snapshot,
         36,
+      )
+
+    const researchAvailable =
+      Boolean(
+        snapshot.research &&
+        Object.keys(
+          snapshot.research,
+        ).length,
+      )
+
+    const researchGeneratedAt =
+      snapshot.researchGeneratedAt ??
+      (
+        researchAvailable
+          ? snapshot.generatedAt
+          : null
+      )
+
+    const researchAgeHours =
+      getTimestampAgeHours(
+        researchGeneratedAt,
       )
 
     /*
@@ -172,40 +194,56 @@ export default async (
     /*
      * Run the scoring model:
      *
-     * 60% strategic
-     * 40% tactical
+     * 60% Portfolio Priority
+     * 40% Market Opportunity
      *
-     * Tactical price signals are adjusted
-     * using the current/latest price.
+     * Recommendation maths is non-AI.
+     * Research is context only.
+     * Price signals are adjusted using
+     * the current/latest price.
      */
     const result =
       analyseTrades(
         balances,
         market,
-        snapshot.research,
+        snapshot.research ?? {},
       )
 
     return Response.json({
       ...result,
 
       dataStatus: {
-        researchGeneratedAt:
+        marketGeneratedAt:
+          snapshot.marketGeneratedAt ??
           snapshot.generatedAt,
 
-        researchAgeHours:
+        marketAgeHours:
           Number(
-            ageHours.toFixed(
-              1,
-            ),
+            ageHours.toFixed(1),
           ),
 
-        researchFresh:
+        marketFresh:
           fresh,
 
-        marketMetricsAvailable:
-          true,
+        researchGeneratedAt,
 
-        researchAvailable:
+        researchAgeDays:
+          Number.isFinite(
+            researchAgeHours,
+          )
+            ? Number(
+                (
+                  researchAgeHours / 24
+                ).toFixed(1),
+              )
+            : null,
+
+        researchAvailable,
+
+        researchAffectsRecommendation:
+          false,
+
+        marketMetricsAvailable:
           true,
 
         tacticalInputsAvailable:
