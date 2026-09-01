@@ -5,36 +5,10 @@ import {
   type Ticker,
 } from './types.mjs'
 
-const emptyResearch = (
-  reason = 'No material valuation signal identified.',
-): ResearchDatum => ({
-  valuationScore: 0,
-  newsScore: 0,
-  thesisDisqualified: false,
-  valuationContext: reason,
-  developments:
-    'No material index or fund development identified.',
-  newsSummary:
-    'No material thesis-changing news identified in the review window.',
-  citations: [],
-})
-
-const unavailableResearch = (): ResearchDatum => ({
-  valuationScore: 0,
-  newsScore: 0,
-  thesisDisqualified: false,
-  valuationContext:
-    'Live valuation research was unavailable on this run, so the valuation signal has been set to neutral.',
-  developments:
-    'Live ETF and index research was unavailable on this run.',
-  newsSummary:
-    'Live news research timed out or was unavailable, so the news signal has been set to neutral.',
-  citations: [],
-})
-
 function parseJson(text: string) {
   const cleaned = text
     .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
     .replace(/```$/i, '')
     .trim()
 
@@ -48,234 +22,322 @@ function clampScore(value: unknown) {
   const score = Number(value)
 
   return Number.isFinite(score)
-    ? Math.max(-2, Math.min(2, score))
+    ? Math.max(-2, Math.min(2, Math.round(score)))
     : 0
 }
 
-function neutralResearch(): Record<
-  Ticker,
-  ResearchDatum
-> {
+function validateResearch(
+  parsed: Record<string, Partial<ResearchDatum>>,
+): Record<Ticker, ResearchDatum> {
   return Object.fromEntries(
-    TICKERS.map((ticker) => [
-      ticker,
-      unavailableResearch(),
-    ]),
+    TICKERS.map((ticker) => {
+      const item = parsed[ticker]
+
+      if (!item) {
+        throw new Error(
+          `Research response is missing ${ticker}`,
+        )
+      }
+
+      const valuationContext = String(
+        item.valuationContext || '',
+      ).trim()
+
+      const developments = String(
+        item.developments || '',
+      ).trim()
+
+      const newsSummary = String(
+        item.newsSummary || '',
+      ).trim()
+
+      if (
+        !valuationContext ||
+        !developments ||
+        !newsSummary
+      ) {
+        throw new Error(
+          `Research response for ${ticker} is incomplete`,
+        )
+      }
+
+      const citations = Array.isArray(
+        item.citations,
+      )
+        ? item.citations
+            .filter(
+              (
+                citation,
+              ): citation is {
+                title: string
+                url: string
+              } =>
+                Boolean(
+                  citation &&
+                    typeof citation.title ===
+                      'string' &&
+                    citation.title.trim() &&
+                    typeof citation.url ===
+                      'string' &&
+                    /^https:\/\//.test(
+                      citation.url,
+                    ),
+                ),
+            )
+            .slice(0, 3)
+        : []
+
+      if (citations.length === 0) {
+        throw new Error(
+          `Research response for ${ticker} has no sources`,
+        )
+      }
+
+      return [
+        ticker,
+        {
+          valuationScore: clampScore(
+            item.valuationScore,
+          ),
+
+          newsScore: clampScore(
+            item.newsScore,
+          ),
+
+          thesisDisqualified:
+            item.thesisDisqualified === true,
+
+          valuationContext,
+
+          developments,
+
+          newsSummary,
+
+          citations,
+        },
+      ]
+    }),
   ) as Record<Ticker, ResearchDatum>
 }
 
 export async function getResearch(): Promise<
   Record<Ticker, ResearchDatum>
 > {
-  /*
-   * Use Netlify's AI Gateway via the OpenAI SDK.
-   *
-   * Luna is deliberately used here because this task does not
-   * require a large reasoning model. It is faster and much
-   * cheaper than GPT-5.2 while still supporting web search.
-   *
-   * The timeout ensures live research can never prevent the
-   * portfolio calculator from returning a result.
-   */
   const client = new OpenAI({
-    timeout: 12000,
-    maxRetries: 0,
+    /*
+     * This function will run inside a Netlify
+     * Background Function, so it can be allowed
+     * substantially more time than the old
+     * synchronous request.
+     */
+    timeout: 180_000,
+    maxRetries: 1,
   })
 
   const today = new Date()
     .toISOString()
     .slice(0, 10)
 
-  try {
-    const response = await client.responses.create({
-      model: 'gpt-5.6-luna',
+  const model =
+    process.env.OPENAI_RESEARCH_MODEL ||
+    'gpt-5.6-luna'
 
-      reasoning: {
-        effort: 'none',
+  console.log(
+    `Starting daily ETF research using ${model}`,
+  )
+
+  const response = await client.responses.create({
+    model,
+
+    reasoning: {
+      effort: 'none',
+    },
+
+    max_output_tokens: 2500,
+
+    tools: [
+      {
+        type: 'web_search_preview',
+        search_context_size: 'medium',
       },
+    ],
 
-      max_output_tokens: 1500,
-
-      tools: [
-        {
-          type: 'web_search',
-        },
-      ],
-
-      input: `
+    input: `
 Today is ${today}.
 
-Research the following ASX-listed ETFs:
+Research these ASX-listed ETFs:
 
-IVV
-DHHF
-VEU
-VAS
-VESG
+- IVV
+- DHHF
+- VEU
+- VAS
+- VESG
 
-This research is ONLY a small tactical input into a
-portfolio-rebalancing model.
+This research will be used as the tactical 20% layer
+of a long-term portfolio rebalancing model.
 
-Be concise.
+The strategic target allocation is:
 
-For each ETF assess:
+IVV 35%
+DHHF 30%
+VEU 15%
+VAS 10%
+VESG 10%
 
-1. Whether its current market/index valuation appears
-   relatively attractive, neutral, or stretched.
+Do NOT recommend which ETF to buy.
 
-2. Any MATERIAL ETF, index or underlying-market
-   developments.
+For EACH ETF, research:
 
-3. MATERIAL financial-market or macroeconomic news
-   published during the previous 7 calendar days.
+1. VALUATION
+Assess the valuation of the underlying market or
+portfolio relative to its own history and comparable
+markets where reliable information is available.
 
-Focus only on information capable of affecting an
-investment decision.
+2. DEVELOPMENTS
+Identify material developments affecting the ETF,
+its index, or its underlying market.
 
-Do not provide general ETF explanations.
+3. LAST 7 DAYS OF NEWS
+Identify significant macroeconomic, central-bank,
+earnings, geopolitical or market news from the
+previous 7 calendar days that is relevant to the ETF.
 
-Prefer:
-- fund issuers
+Use current web research.
+
+Prefer authoritative and high-quality sources such as:
+
+- ETF issuers
 - index providers
-- exchanges
+- ASX
 - central banks
 - regulators
+- official economic data
 - Reuters
 - other high-quality financial reporting
 
+Ignore routine commentary and low-quality speculation.
+
+SCORING
+
+valuationScore:
+
++2 = materially attractive
++1 = somewhat attractive
+ 0 = broadly neutral
+-1 = somewhat stretched
+-2 = materially unattractive
+
+newsScore:
+
++2 = materially positive
++1 = mildly positive
+ 0 = broadly neutral
+-1 = mildly negative
+-2 = materially negative
+
+thesisDisqualified should be TRUE only if a genuine
+structural or thesis-changing negative development
+means that simply "buying the dip" would be
+inappropriate.
+
+A normal market decline, recession fear, rate move,
+geopolitical volatility or ordinary earnings weakness
+should NOT automatically be considered
+thesis-disqualifying.
+
 Return ONLY valid JSON.
 
-Required structure:
+Use exactly this structure:
 
 {
   "IVV": {
     "valuationScore": 0,
     "newsScore": 0,
     "thesisDisqualified": false,
-    "valuationContext": "",
-    "developments": "",
-    "newsSummary": "",
+    "valuationContext": "One concise but informative sentence.",
+    "developments": "One concise but informative sentence.",
+    "newsSummary": "One concise but informative sentence.",
     "citations": [
       {
-        "title": "",
+        "title": "Source title",
         "url": "https://..."
       }
     ]
+  },
+  "DHHF": {
+    "valuationScore": 0,
+    "newsScore": 0,
+    "thesisDisqualified": false,
+    "valuationContext": "",
+    "developments": "",
+    "newsSummary": "",
+    "citations": []
+  },
+  "VEU": {
+    "valuationScore": 0,
+    "newsScore": 0,
+    "thesisDisqualified": false,
+    "valuationContext": "",
+    "developments": "",
+    "newsSummary": "",
+    "citations": []
+  },
+  "VAS": {
+    "valuationScore": 0,
+    "newsScore": 0,
+    "thesisDisqualified": false,
+    "valuationContext": "",
+    "developments": "",
+    "newsSummary": "",
+    "citations": []
+  },
+  "VESG": {
+    "valuationScore": 0,
+    "newsScore": 0,
+    "thesisDisqualified": false,
+    "valuationContext": "",
+    "developments": "",
+    "newsSummary": "",
+    "citations": []
   }
 }
 
-Include the same structure for:
-DHHF, VEU, VAS and VESG.
+Each ETF must include at least one real source URL.
 
-SCORING:
+Do not include markdown fences or text outside the
+JSON object.
+    `.trim(),
+  })
 
-valuationScore:
--2 = materially unattractive
--1 = somewhat unattractive
- 0 = neutral
-+1 = somewhat attractive
-+2 = materially attractive
+  if (!response.output_text) {
+    throw new Error(
+      'Research provider returned no text',
+    )
+  }
 
-newsScore:
--2 = materially negative
--1 = mildly negative
- 0 = neutral
-+1 = mildly positive
-+2 = materially positive
+  let parsed: Record<
+    string,
+    Partial<ResearchDatum>
+  >
 
-Set thesisDisqualified to true ONLY where there is a
-genuine structural or thesis-changing negative event.
-
-Use no more than 2 citations per ETF.
-
-Do NOT recommend what ETF to buy.
-      `.trim(),
-    })
-
-    let parsed: Record<
-      string,
-      Partial<ResearchDatum>
-    >
-
-    try {
-      parsed = parseJson(response.output_text)
-    } catch {
-      console.error(
-        'Research response could not be parsed',
-      )
-
-      return neutralResearch()
-    }
-
-    return Object.fromEntries(
-      TICKERS.map((ticker) => {
-        const fallback = emptyResearch()
-        const item =
-          parsed[ticker] ?? fallback
-
-        return [
-          ticker,
-          {
-            valuationScore: clampScore(
-              item.valuationScore,
-            ),
-
-            newsScore: clampScore(
-              item.newsScore,
-            ),
-
-            thesisDisqualified:
-              item.thesisDisqualified === true,
-
-            valuationContext: String(
-              item.valuationContext ||
-                fallback.valuationContext,
-            ),
-
-            developments: String(
-              item.developments ||
-                fallback.developments,
-            ),
-
-            newsSummary: String(
-              item.newsSummary ||
-                fallback.newsSummary,
-            ),
-
-            citations: Array.isArray(
-              item.citations,
-            )
-              ? item.citations
-                  .filter(
-                    (citation) =>
-                      citation?.title &&
-                      typeof citation.url ===
-                        'string' &&
-                      /^https:\/\//.test(
-                        citation.url,
-                      ),
-                  )
-                  .slice(0, 2)
-              : [],
-          },
-        ]
-      }),
-    ) as Record<Ticker, ResearchDatum>
+  try {
+    parsed = parseJson(response.output_text)
   } catch (error) {
-    /*
-     * Research is deliberately non-fatal.
-     *
-     * If Netlify AI Gateway is slow, unavailable,
-     * out of credits, or the model request fails,
-     * the portfolio model still runs.
-     *
-     * The tactical AI inputs simply become neutral.
-     */
     console.error(
-      'Live research unavailable:',
-      error,
+      'Unreadable research response:',
+      response.output_text,
     )
 
-    return neutralResearch()
+    throw new Error(
+      'Research provider returned invalid JSON',
+    )
   }
+
+  const research = validateResearch(parsed)
+
+  console.log(
+    'Daily ETF research completed successfully',
+  )
+
+  return research
 }
